@@ -20,6 +20,8 @@ struct PromptComposer: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var glassNamespace
     @State private var isAttachmentExpanded = false
+    /// True once the text wraps past one line — squares off the field.
+    @State private var isMultiline = false
 
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isGenerating
@@ -57,8 +59,23 @@ struct PromptComposer: View {
                             .focused($isFocused)
                             .disabled(isGenerating)
                             .padding(.horizontal, 16)
+                            .background {
+                                // Measure the text height (before the vertical
+                                // padding below, so no feedback loop) to tell one
+                                // line from many.
+                                GeometryReader { proxy in
+                                    Color.clear.onChange(of: proxy.size.height, initial: true) { _, h in
+                                        isMultiline = h > 30 // ponytail: assumes default Dynamic Type
+                                    }
+                                }
+                            }
+                            // Consistent vertical padding so the field grows one
+                            // clean line at a time (no padding jump = no jiggle);
+                            // single line lands at 44 (capsule). Only the corner
+                            // radius tightens to 16 on wrap, which is height-free.
+                            .padding(.vertical, 11)
                             .frame(minHeight: 44)
-                            .glassEffect(.regular, in: .capsule)
+                            .glassEffect(.regular, in: .rect(cornerRadius: isMultiline ? 16 : 22))
                             .glassEffectID("messageField", in: glassNamespace)
                     }
 
