@@ -54,6 +54,30 @@ struct ConversationSidebar: View {
                 .padding(.horizontal, AppSpacing.lg)
                 .padding(.vertical, AppSpacing.md)
             }
+            // Magnifier crossfade (no travel), symmetric so open is the exact
+            // reverse of close: whichever icon is fading IN waits (delay) for the
+            // other to fade OUT first, in either direction. The placeholders
+            // above reserve both slots. ponytail: 300 is RootView.drawerWidth.
+            .overlay {
+                GeometryReader { proxy in
+                    let mid = proxy.size.height / 2
+                    let fadeOut = Animation.easeOut(duration: 0.1)
+                    let fadeIn = Animation.easeIn(duration: 0.15).delay(0.08)
+                    Image(systemName: "magnifyingglass")
+                        .font(AppFont.body)
+                        .foregroundStyle(AppColor.Text.secondary)
+                        .position(x: AppSpacing.lg + AppSpacing.md + 8, y: mid)
+                        .opacity(isSearching ? 1 : 0)
+                        .animation(isSearching ? fadeIn : fadeOut, value: isSearching)
+                    Image(systemName: "magnifyingglass")
+                        .font(AppFont.body)
+                        .foregroundStyle(AppColor.Tint.cta)
+                        .position(x: 300 - AppSpacing.lg - 22, y: mid)
+                        .opacity(isSearching ? 0 : 1)
+                        .animation(isSearching ? fadeOut : fadeIn, value: isSearching)
+                }
+                .allowsHitTesting(false)
+            }
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: AppSpacing.xxs) {
@@ -138,22 +162,29 @@ struct ConversationSidebar: View {
     }
 
     private var searchButton: some View {
+        // `.regular`, not `.interactive()`: interactive glass replays its form
+        // morph as the circle re-forms on close, which read as a bounce.
         Button { openSearch() } label: {
+            // Invisible placeholder; the real icon is the traveling overlay.
             Image(systemName: "magnifyingglass")
                 .font(AppFont.body)
                 .foregroundStyle(AppColor.Tint.cta)
+                .opacity(0)
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }
-        .glassEffect(.regular.interactive(), in: .circle)
+        .glassEffect(.regular, in: .circle)
         .glassEffectID("search", in: glassNS)
         .accessibilityLabel("Search conversations")
     }
 
     private var searchField: some View {
         HStack(spacing: AppSpacing.xs) {
+            // Invisible — reserves the slot; the real icon is the traveling
+            // overlay in the header so it can glide to the circle on close.
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(AppColor.Text.secondary)
+                .opacity(0)
             TextField("Search", text: $searchQuery)
                 .focused($searchFocused)
                 .font(AppFont.body)
