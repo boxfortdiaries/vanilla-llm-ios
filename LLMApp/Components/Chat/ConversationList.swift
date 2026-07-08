@@ -21,7 +21,8 @@ struct ConversationList: View {
                             .id(message.id)
                     }
                 }
-                .padding(AppSpacing.md)
+                .padding(.horizontal, AppSpacing.lg)
+                .padding(.vertical, AppSpacing.md)
                 .scrollTargetLayout()
             }
             .onScrollGeometryChange(for: Bool.self) { geometry in

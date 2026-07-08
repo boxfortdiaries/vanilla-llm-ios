@@ -1,5 +1,16 @@
 import SwiftUI
 
+/// Whether this bar's glass buttons use interactive glass. Off only during the
+/// brief window when a full-screen glass surface retracts off the bar, since
+/// interactive glass replays its form morph on that re-composite (the "jiggle").
+private struct NavGlassInteractiveKey: EnvironmentKey { static let defaultValue = true }
+extension EnvironmentValues {
+    var navGlassInteractive: Bool {
+        get { self[NavGlassInteractiveKey.self] }
+        set { self[NavGlassInteractiveKey.self] = newValue }
+    }
+}
+
 /// Custom floating top bar (spec §13.1) used in place of the system
 /// navigation bar chrome — screens that use this should hide the standard
 /// bar with `.toolbar(.hidden, for: .navigationBar)` to avoid showing both.
@@ -44,6 +55,16 @@ struct GlassNavigationBar: View {
     var state: State = .default
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.navGlassInteractive) private var glassInteractive
+    /// Own identity scope for the bar's glass buttons (stable glassEffectIDs
+    /// below) — rendering hygiene so they're treated as persistent elements.
+    @Namespace private var navGlassNS
+
+    /// Interactive glass for press feedback, except during a search reveal
+    /// (see `navGlassInteractive`) where it would replay its form morph.
+    private var glassStyle: Glass {
+        glassInteractive ? .regular.interactive() : .regular
+    }
 
     private var titleFont: Font {
         switch state {
@@ -54,42 +75,45 @@ struct GlassNavigationBar: View {
     }
 
     var body: some View {
-        HStack {
-            if let leadingAction {
-                glassButton(icon: leadingAction.icon, label: leadingAction.label, identifier: leadingAction.identifier, action: leadingAction.handler)
-            }
+        GlassEffectContainer(spacing: AppSpacing.sm) {
+            HStack {
+                if let leadingAction {
+                    glassButton(icon: leadingAction.icon, label: leadingAction.label, identifier: leadingAction.identifier, action: leadingAction.handler)
+                }
 
-            if let title {
-                Text(title)
-                    .font(titleFont)
-                    .foregroundStyle(AppColor.Text.primary)
-                    .lineLimit(1)
-                    .accessibilityAddTraits(.isHeader)
-            }
+                if let title {
+                    Text(title)
+                        .font(titleFont)
+                        .foregroundStyle(AppColor.Text.primary)
+                        .lineLimit(1)
+                        .accessibilityAddTraits(.isHeader)
+                }
 
-            Spacer(minLength: 0)
+                Spacer(minLength: 0)
 
-            HStack(spacing: AppSpacing.sm) {
-                ForEach(trailingActions) { action in
-                    if let menu = action.menu {
-                        Menu {
-                            ForEach(menu) { item in
-                                Button(role: item.role, action: item.handler) {
-                                    Label(item.title, systemImage: item.icon)
+                HStack(spacing: AppSpacing.sm) {
+                    ForEach(trailingActions) { action in
+                        if let menu = action.menu {
+                            Menu {
+                                ForEach(menu) { item in
+                                    Button(role: item.role, action: item.handler) {
+                                        Label(item.title, systemImage: item.icon)
+                                    }
                                 }
+                            } label: {
+                                glassIcon(action.icon)
+                                    .glassEffect(glassStyle, in: .circle)
+                                    .glassEffectID(action.icon, in: navGlassNS)
                             }
-                        } label: {
-                            glassIcon(action.icon)
-                                .glassEffect(.regular.interactive(), in: .circle)
+                            .accessibilityLabel(action.label)
+                        } else {
+                            glassButton(icon: action.icon, label: action.label, identifier: action.identifier, action: action.handler)
                         }
-                        .accessibilityLabel(action.label)
-                    } else {
-                        glassButton(icon: action.icon, label: action.label, identifier: action.identifier, action: action.handler)
                     }
                 }
             }
         }
-        .padding(.horizontal, AppSpacing.md)
+        .padding(.horizontal, AppSpacing.lg)
         .padding(.vertical, state == .default ? AppSpacing.md : AppSpacing.sm)
         .background {
             if state == .scrolled || state == .collapsed {
@@ -105,7 +129,8 @@ struct GlassNavigationBar: View {
     /// this SDK (see memory: glasseffect-plain-buttonstyle).
     private func glassButton(icon: String, label: String, identifier: String?, action: @escaping () -> Void) -> some View {
         Button(action: action) { glassIcon(icon) }
-            .glassEffect(.regular.interactive(), in: .circle)
+            .glassEffect(glassStyle, in: .circle)
+            .glassEffectID(icon, in: navGlassNS)
             .accessibilityLabel(label)
             .accessibilityIdentifier(identifier ?? label)
     }

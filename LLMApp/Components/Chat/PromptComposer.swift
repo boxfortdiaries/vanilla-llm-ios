@@ -66,7 +66,7 @@ struct PromptComposer: View {
                 }
             }
         }
-        .padding(.horizontal, AppSpacing.md)
+        .padding(.horizontal, AppSpacing.lg)
         .padding(.vertical, AppSpacing.sm)
         .animation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion), value: attachments.count)
         .accessibilityElement(children: .contain)

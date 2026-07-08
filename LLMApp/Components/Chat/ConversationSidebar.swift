@@ -16,11 +16,6 @@ struct ConversationSidebar: View {
 
     @Namespace private var glassNS
     @FocusState private var searchFocused: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var searchAnimation: Animation {
-        AppAnimation.resolve(.smooth(duration: AppAnimation.standardDuration), reduceMotion: reduceMotion)
-    }
 
     private var conversations: [Conversation] {
         let visible = store.conversations.filter { !$0.messages.isEmpty || $0.id == currentID }
@@ -56,7 +51,7 @@ struct ConversationSidebar: View {
                         searchButton
                     }
                 }
-                .padding(.horizontal, AppSpacing.md)
+                .padding(.horizontal, AppSpacing.lg)
                 .padding(.vertical, AppSpacing.md)
             }
 
@@ -75,9 +70,10 @@ struct ConversationSidebar: View {
                         ForEach(recentConversations) { conversationRow($0) }
                     }
                 }
-                // md gutter both modes: aligns the selection fill's edges with
-                // the title (left) and the search / New-chat buttons (right).
-                .padding(.horizontal, AppSpacing.md)
+                // Small outer gutter (sm): the selection pill sits here and
+                // bleeds ~12pt past the content column, ChatGPT-style. Row text
+                // adds its own sm inset to land on the 24pt content column.
+                .padding(.horizontal, AppSpacing.sm)
                 // Clear the floating CTA so the last row can scroll above it
                 // (no CTA while searching, so no reserve needed).
                 .padding(.bottom, isSearching ? AppSpacing.lg : 44 + AppSpacing.lg)
@@ -99,6 +95,7 @@ struct ConversationSidebar: View {
     private func sectionHeader(_ title: String) -> some View {
         SectionHeader(title: title)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, AppSpacing.sm)
             .padding(.top, AppSpacing.sm)
             .padding(.bottom, AppSpacing.xxs)
     }
@@ -118,10 +115,10 @@ struct ConversationSidebar: View {
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, isSearching ? AppSpacing.md : AppSpacing.sm)
-                // No horizontal inset: the words sit flush at the md gutter, in
-                // line with the "LLM-iOS" title and the avatar's left edge. The
-                // selection fill spans the same gutter, so its right edge lands
-                // on the search / New-chat inset. No selection while searching.
+                // sm inset within the pill so the words sit on the 24pt content
+                // column (in line with the title, headers, and avatar) while the
+                // pill breathes around them. No selection while searching.
+                .padding(.horizontal, AppSpacing.sm)
                 .background(
                     (!isSearching && conversation.id == currentID) ? AppColor.selection : Color.clear,
                     in: .rect(cornerRadius: AppRadius.small)
@@ -182,13 +179,16 @@ struct ConversationSidebar: View {
         .accessibilityLabel("Close search")
     }
 
+    // No withAnimation here (that would be a global transaction and jiggle the
+    // chat's glass nav buttons). RootView owns a scoped `.animation(_, value:
+    // isSearching)` on this panel, so only the panel animates the toggle.
     private func openSearch() {
-        withAnimation(searchAnimation) { isSearching = true }
+        isSearching = true
     }
 
     private func closeSearch() {
         searchQuery = ""
-        withAnimation(searchAnimation) { isSearching = false }
+        isSearching = false
     }
 
     /// Bottom bar (Claude-style): account avatar hard-left, New Chat pill
@@ -221,7 +221,7 @@ struct ConversationSidebar: View {
                 .buttonStyle(PressableButtonStyle(background: AppColor.Tint.cta, cornerRadius: 22))
                 .accessibilityIdentifier("sidebarNewChat")
             }
-            .padding(.horizontal, AppSpacing.md)
+            .padding(.horizontal, AppSpacing.lg)
             .padding(.bottom, AppSpacing.sm)
         }
         .frame(maxWidth: .infinity)

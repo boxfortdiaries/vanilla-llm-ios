@@ -19,6 +19,9 @@ struct RootView: View {
     /// Full-screen conversation search, launched from the drawer's search button.
     @State private var isSearching = false
     @State private var searchQuery = ""
+    /// Nav-bar glass stays interactive except across a search open/close, when
+    /// the retracting panel would replay interactive glass's form morph.
+    @State private var chatGlassInteractive = true
 
     private let drawerWidth: CGFloat = 300
 
@@ -30,6 +33,9 @@ struct RootView: View {
         // a critically-damped spring — same decel feel, settles with no bounce.
         // Only affects tap/release-snap timing; the live drag is unaffected.
         let anim = AppAnimation.resolve(.smooth(duration: AppAnimation.slowDuration), reduceMotion: reduceMotion)
+        // Scoped to the sidebar only (below) so opening/closing search never
+        // becomes a global transaction that jiggles the chat's glass nav buttons.
+        let searchAnim = AppAnimation.resolve(.smooth(duration: AppAnimation.standardDuration), reduceMotion: reduceMotion)
 
         // Continuous openness: the settled position (0 or drawerWidth) plus the
         // live drag, clamped to the drawer. `progress` (0→1) drives every layer
@@ -65,6 +71,9 @@ struct RootView: View {
             .opacity(isSearching ? 1 : progress)
             .scaleEffect(isSearching ? 1 : 0.98 + 0.02 * progress)
             .zIndex(isSearching ? 2 : 0)
+            // Animate the expand + glass morph here, scoped to the panel, so
+            // the toggle never animates the chat (no hamburger jiggle).
+            .animation(searchAnim, value: isSearching)
 
             NavigationStack(path: Bindable(container.router).path) {
                 ConversationView(
@@ -77,6 +86,20 @@ struct RootView: View {
             .environment(container.appState)
             .environment(container.router)
             .environment(container.navigationCoordinator)
+            .environment(\.navGlassInteractive, chatGlassInteractive)
+            // Drop interactive glass on the nav buttons across a search
+            // open/close (keep it off through the retract so the reveal doesn't
+            // replay the form morph), then restore it once things settle.
+            .onChange(of: isSearching) { _, searching in
+                if searching {
+                    chatGlassInteractive = false
+                } else {
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(0.5))
+                        chatGlassInteractive = true
+                    }
+                }
+            }
             // Invisible tap-catcher (chat stays fully opaque — no dimming
             // scrim). Applied BEFORE the offset so it travels with the chat and
             // covers the shifted chat bounds, not the exposed menu.

@@ -137,7 +137,7 @@ struct ConversationView: View {
                             }
                         }
                     }
-                    .padding(.horizontal, AppSpacing.md)
+                    .padding(.horizontal, AppSpacing.lg)
                     .transition(.opacity)
                 }
             }
