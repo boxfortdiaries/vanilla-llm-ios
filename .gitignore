@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# XcodeGen generates the project from project.yml — regenerate with
+# `xcodegen generate`, so the bundle itself is not tracked.
+*.xcodeproj
+
+# Swift Package Manager
+.swiftpm/
+.build/
+Packages/
