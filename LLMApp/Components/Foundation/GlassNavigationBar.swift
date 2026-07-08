@@ -56,9 +56,6 @@ struct GlassNavigationBar: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.navGlassInteractive) private var glassInteractive
-    /// Own identity scope for the bar's glass buttons (stable glassEffectIDs
-    /// below) — rendering hygiene so they're treated as persistent elements.
-    @Namespace private var navGlassNS
 
     /// Interactive glass for press feedback, except during a search reveal
     /// (see `navGlassInteractive`) where it would replay its form morph.
@@ -75,43 +72,34 @@ struct GlassNavigationBar: View {
     }
 
     var body: some View {
-        GlassEffectContainer(spacing: AppSpacing.sm) {
-            HStack {
-                if let leadingAction {
-                    glassButton(icon: leadingAction.icon, label: leadingAction.label, identifier: leadingAction.identifier, action: leadingAction.handler)
-                }
+        HStack {
+            if let leadingAction {
+                glassButton(icon: leadingAction.icon, label: leadingAction.label, identifier: leadingAction.identifier, action: leadingAction.handler)
+            }
 
-                if let title {
-                    Text(title)
-                        .font(titleFont)
-                        .foregroundStyle(AppColor.Text.primary)
-                        .lineLimit(1)
-                        .accessibilityAddTraits(.isHeader)
-                }
+            if let title {
+                Text(title)
+                    .font(titleFont)
+                    .foregroundStyle(AppColor.Text.primary)
+                    .lineLimit(1)
+                    .accessibilityAddTraits(.isHeader)
+            }
 
-                Spacer(minLength: 0)
+            Spacer(minLength: 0)
 
-                HStack(spacing: AppSpacing.sm) {
-                    ForEach(trailingActions) { action in
-                        if let menu = action.menu {
-                            Menu {
-                                ForEach(menu) { item in
-                                    Button(role: item.role, action: item.handler) {
-                                        Label(item.title, systemImage: item.icon)
-                                    }
-                                }
-                            } label: {
-                                glassIcon(action.icon)
-                                    .glassEffect(glassStyle, in: .circle)
-                                    .glassEffectID(action.icon, in: navGlassNS)
-                            }
-                            .accessibilityLabel(action.label)
-                        } else {
-                            glassButton(icon: action.icon, label: action.label, identifier: action.identifier, action: action.handler)
-                        }
+            // Trailing actions share one glass pill (capsule): a single action
+            // reads as a circle, two read as a segmented pill split by a hairline
+            // divider (ChatGPT-style). glassStyle keeps it jiggle-free during a
+            // search reveal, same as the leading button.
+            HStack(spacing: 0) {
+                ForEach(Array(trailingActions.enumerated()), id: \.element.id) { index, action in
+                    if index > 0 {
+                        Divider().frame(height: 22)
                     }
+                    trailingButton(action)
                 }
             }
+            .glassEffect(glassStyle, in: .capsule)
         }
         .padding(.horizontal, AppSpacing.lg)
         .padding(.vertical, state == .default ? AppSpacing.md : AppSpacing.sm)
@@ -124,13 +112,34 @@ struct GlassNavigationBar: View {
         .animation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion), value: state)
     }
 
+    /// A trailing segment inside the shared glass pill — plain icon (the pill
+    /// owns the glass), a Menu for `menu` actions or a tap Button otherwise.
+    @ViewBuilder
+    private func trailingButton(_ action: Action) -> some View {
+        if let menu = action.menu {
+            Menu {
+                ForEach(menu) { item in
+                    Button(role: item.role, action: item.handler) {
+                        Label(item.title, systemImage: item.icon)
+                    }
+                }
+            } label: {
+                glassIcon(action.icon)
+            }
+            .accessibilityLabel(action.label)
+        } else {
+            Button(action: action.handler) { glassIcon(action.icon) }
+                .accessibilityLabel(action.label)
+                .accessibilityIdentifier(action.identifier ?? action.label)
+        }
+    }
+
     /// Liquid-glass circular icon button (iOS 26 native toolbar look). Default
     /// button style, not `.plain` — plain-styled glass silently drops taps on
     /// this SDK (see memory: glasseffect-plain-buttonstyle).
     private func glassButton(icon: String, label: String, identifier: String?, action: @escaping () -> Void) -> some View {
         Button(action: action) { glassIcon(icon) }
             .glassEffect(glassStyle, in: .circle)
-            .glassEffectID(icon, in: navGlassNS)
             .accessibilityLabel(label)
             .accessibilityIdentifier(identifier ?? label)
     }

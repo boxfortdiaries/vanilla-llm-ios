@@ -33,7 +33,9 @@ struct ConversationView: View {
         AppBackground {
             VStack(spacing: 0) {
                 GlassNavigationBar(
-                    title: viewModel.conversation.title,
+                    // No title in the chat — the drawer already names each
+                    // conversation; the bar stays just the menu + actions.
+                    title: nil,
                     leadingAction: .init(icon: "line.3.horizontal", label: "Menu") {
                         withAnimation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion)) {
                             navigationCoordinator.toggleSidebar()
@@ -117,33 +119,45 @@ struct ConversationView: View {
     }
 
     private var emptyConversation: some View {
-        ScrollView {
-            VStack(spacing: AppSpacing.lg) {
-                EmptyState(
-                    icon: "bubble.left.and.bubble.right",
-                    title: "Start a conversation",
-                    message: "Ask a question, brainstorm an idea, or paste something you'd like explained."
-                )
+        // Blank slate (ChatGPT-style): no hero — just starter prompts as plain
+        // icon+text rows anchored right above the composer. They drop away once
+        // the user starts typing.
+        VStack(alignment: .leading, spacing: 0) {
+            Spacer(minLength: 0)
 
-                // Starter prompts drop away once the user begins typing —
-                // they're a blank-slate affordance, and keeping them up would
-                // let their full-width tap targets sit under the raised
-                // composer when the keyboard is open.
-                if viewModel.composerText.isEmpty {
-                    VStack(spacing: AppSpacing.sm) {
-                        ForEach(suggestions, id: \.text) { suggestion in
-                            PromptSuggestionCard(text: suggestion.text, icon: suggestion.icon) {
-                                viewModel.composerText = suggestion.text
+            if viewModel.composerText.isEmpty {
+                // xxs inter-row spacing to match the drawer's conversation list
+                // (both rows also share the same sm vertical padding).
+                VStack(alignment: .leading, spacing: AppSpacing.xxs) {
+                    ForEach(suggestions, id: \.text) { suggestion in
+                        Button {
+                            viewModel.composerText = suggestion.text
+                        } label: {
+                            HStack(spacing: AppSpacing.md) {
+                                Image(systemName: suggestion.icon)
+                                    .font(.system(size: 20))
+                                    .foregroundStyle(AppColor.Text.secondary)
+                                    .frame(width: 28)
+                                Text(suggestion.text)
+                                    .font(AppFont.body)
+                                    .foregroundStyle(AppColor.Text.secondary)
+                                Spacer(minLength: 0)
                             }
+                            .padding(.vertical, AppSpacing.sm)
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
                     }
-                    .padding(.horizontal, AppSpacing.lg)
-                    .transition(.opacity)
                 }
+                // xl (not lg): nudges the rows right ~8pt so each icon's center
+                // lines up with the hamburger and composer + icons (which sit
+                // centered in 44pt circles at the lg margin).
+                .padding(.horizontal, AppSpacing.xl)
+                .padding(.bottom, AppSpacing.xs)
+                .transition(.opacity)
             }
-            .padding(.top, AppSpacing.xl)
-            .frame(maxWidth: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .animation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion), value: viewModel.composerText.isEmpty)
     }
 }

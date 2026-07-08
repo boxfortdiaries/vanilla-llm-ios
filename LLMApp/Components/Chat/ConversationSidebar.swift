@@ -212,10 +212,12 @@ struct ConversationSidebar: View {
                 Spacer(minLength: 0)
 
                 Button(action: onNewChat) {
-                    Label("New chat", systemImage: "plus")
+                    Label("New chat", systemImage: "square.and.pencil")
                         .font(AppFont.headline)
                         .foregroundStyle(AppColor.Text.inverse)
-                        .padding(.horizontal, AppSpacing.lg)
+                        // Match the message field's 16pt internal inset (md) so
+                        // the pill isn't longer than it needs to be.
+                        .padding(.horizontal, AppSpacing.md)
                         .frame(height: 44)
                 }
                 .buttonStyle(PressableButtonStyle(background: AppColor.Tint.cta, cornerRadius: 22))
