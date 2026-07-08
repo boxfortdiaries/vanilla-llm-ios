@@ -119,10 +119,19 @@ struct ConversationSidebar: View {
                 // column (in line with the title, headers, and avatar) while the
                 // pill breathes around them. No selection while searching.
                 .padding(.horizontal, AppSpacing.sm)
-                .background(
-                    (!isSearching && conversation.id == currentID) ? AppColor.selection : Color.clear,
-                    in: .rect(cornerRadius: AppRadius.small)
-                )
+                // Cap the selection fill at the drawer row width so it keeps a
+                // consistent size (and fades out) instead of growing as the row
+                // widens into search.
+                // ponytail: drawerWidth(300) − 2·sm gutter = 276; keep in sync
+                // with RootView.drawerWidth / the list's horizontal padding.
+                .background(alignment: .leading) {
+                    if conversation.id == currentID {
+                        RoundedRectangle(cornerRadius: AppRadius.small)
+                            .fill(AppColor.selection)
+                            .frame(maxWidth: 276, alignment: .leading)
+                            .opacity(isSearching ? 0 : 1)
+                    }
+                }
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
