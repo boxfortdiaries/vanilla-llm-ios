@@ -20,11 +20,10 @@ enum AppColor {
     enum Surface {
         static let primary = Color(uiColor: .systemBackground)
         static let elevated = Color(uiColor: .secondarySystemBackground)
-        /// User-bubble fill (per Dan 2026-07): system gray ramp, one step
-        /// darker than the Messages-app gray so it holds up against the
-        /// grouped canvas. Pair with `Text.primary`, not white — the darker
-        /// grays in the ramp fail contrast with white text.
-        static let bubble = Color(uiColor: .systemGray4)
+        /// User-bubble fill (per Dan 2026-07): system gray ramp. gray5 (not
+        /// gray4) — a touch lighter reads better on the grouped canvas while
+        /// still holding shape. Pair with `Text.primary`, not white.
+        static let bubble = Color(uiColor: .systemGray5)
         // ponytail: "Surface.Glass" in spec §6.1 is a material, not a color —
         // use `.glassEffect()` directly wherever the spec calls for glass.
     }

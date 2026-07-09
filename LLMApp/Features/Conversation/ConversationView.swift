@@ -105,7 +105,7 @@ struct ConversationView: View {
             // duplicate. Only surfaces once the chat has messages. The drawer
             // (hamburger) remains the full browse/new-chat surface everywhere.
             viewModel.messages.isEmpty ? nil :
-                .init(icon: "square.and.pencil", label: "New Chat", identifier: "navNewChat", handler: navigationCoordinator.newChat),
+                .init(icon: "plus.bubble", label: "New Chat", identifier: "navNewChat", handler: navigationCoordinator.newChat),
             .init(icon: "ellipsis", label: "More", menu: [
                 .init(title: "Rename", icon: "pencil") {
                     renameText = viewModel.conversation.title
@@ -158,7 +158,9 @@ struct ConversationView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        .animation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion), value: viewModel.composerText.isEmpty)
+        // Gentle, slightly slower fade for the starter prompts (easeInOut reads
+        // softer than the spring token for a pure opacity change).
+        .animation(AppAnimation.resolve(.easeInOut(duration: 0.35), reduceMotion: reduceMotion), value: viewModel.composerText.isEmpty)
     }
 }
 

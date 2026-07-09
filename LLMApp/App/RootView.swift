@@ -22,6 +22,9 @@ struct RootView: View {
     /// Nav-bar glass stays interactive except across a search open/close, when
     /// the retracting panel would replay interactive glass's form morph.
     @State private var chatGlassInteractive = true
+    /// Full width of the root, so searching can push the chat *entirely* off the
+    /// right edge (ChatGPT pattern) rather than overlaying the search on top.
+    @State private var containerWidth: CGFloat = 0
 
     private let drawerWidth: CGFloat = 300
 
@@ -41,8 +44,11 @@ struct RootView: View {
         // live drag, clamped to the drawer. `progress` (0→1) drives every layer
         // so the menu and chat track the finger together, not just on release.
         let base: CGFloat = coordinator.isSidebarOpen ? drawerWidth : 0
-        let offsetX = min(max(base + dragTranslation, 0), drawerWidth)
-        let progress = offsetX / drawerWidth
+        let dragOffset = min(max(base + dragTranslation, 0), drawerWidth)
+        let progress = dragOffset / drawerWidth
+        // Searching slides the chat fully off-screen right to reveal the search
+        // surface behind it; otherwise it sits at the drawer offset.
+        let chatOffset = isSearching ? containerWidth : dragOffset
 
         ZStack(alignment: .leading) {
             // Drawer backdrop — fills the strip the chat reveals so the menu
@@ -63,16 +69,15 @@ struct RootView: View {
                 searchQuery: $searchQuery
             )
             // Drawer: fixed 300pt behind the chat. Searching: expands to full
-            // width and above the chat (zIndex) to become the search surface.
-            // The sidebar drives `isSearching` inside withAnimation, so these
-            // width/opacity/scale changes interpolate with the glass morph.
+            // width to become the search surface — it stays *behind* the chat
+            // (no zIndex bump), and the chat slides fully off to reveal it,
+            // rather than this panel overlaying the chat.
             .frame(width: isSearching ? nil : drawerWidth)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .opacity(isSearching ? 1 : progress)
             .scaleEffect(isSearching ? 1 : 0.98 + 0.02 * progress)
-            .zIndex(isSearching ? 2 : 0)
-            // Animate the expand + glass morph here, scoped to the panel, so
-            // the toggle never animates the chat (no hamburger jiggle).
+            // Animate the expand here, scoped to the panel, so the toggle never
+            // globally animates the chat's glass nav buttons (jiggle).
             .animation(searchAnim, value: isSearching)
 
             NavigationStack(path: Bindable(container.router).path) {
@@ -114,9 +119,23 @@ struct RootView: View {
                 }
             }
             // Drop shadow separates the chat from the menu; leans left toward it.
-            .shadow(color: .black.opacity(0.2 * progress), radius: 16, x: -2)
-            .offset(x: offsetX)
+            // Fades to 0 while searching (on searchAnim, below) so it eases out as
+            // the chat is pushed off, rather than blinking out when the edge
+            // clears the screen at still-full opacity.
+            .shadow(color: .black.opacity(isSearching ? 0 : 0.2 * progress), radius: 16, x: -2)
+            .offset(x: chatOffset)
+            // Animate the search push/return here (scoped to the chat) so it
+            // doesn't become a global transaction that jiggles the nav glass.
+            .animation(searchAnim, value: isSearching)
             .zIndex(1) // chat sits above the menu
+        }
+        // Track the root width so `chatOffset` can push the chat fully off-screen.
+        .background {
+            GeometryReader { proxy in
+                Color.clear.onChange(of: proxy.size.width, initial: true) { _, w in
+                    containerWidth = w
+                }
+            }
         }
         // Drag the chat to open/close the drawer. `simultaneousGesture` so it
         // never blocks vertical scrolling or button taps beneath it; we only

@@ -14,7 +14,6 @@ struct ConversationSidebar: View {
     @Binding var isSearching: Bool
     @Binding var searchQuery: String
 
-    @Namespace private var glassNS
     @FocusState private var searchFocused: Bool
 
     private var conversations: [Conversation] {
@@ -33,16 +32,23 @@ struct ConversationSidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header morphs between title+search-circle and full field+close.
-            // The circle and the field share glassEffectID "search" in one
-            // GlassEffectContainer, so tapping the circle performs the real
-            // Liquid Glass morph (same pattern as PromptComposer's field swap).
-            GlassEffectContainer(spacing: AppSpacing.sm) {
-                HStack(spacing: AppSpacing.sm) {
-                    if isSearching {
-                        searchField
-                        closeSearchButton
-                    } else {
+            // Header swaps title+search-circle ⇄ full field+close. Deliberately
+            // NOT a GlassEffectContainer: the container tweens its glass
+            // children's positions on every layout change, which slid the circle
+            // in from screen-centre on close no matter what id/pin we used.
+            // Instead each side hand-animates — the circle is pinned and just
+            // fades; the field grows/shrinks anchored at the circle's spot — so
+            // nothing travels.
+            HStack(spacing: AppSpacing.sm) {
+                if isSearching {
+                    searchField
+                    closeSearchButton
+                } else {
+                    // Pin the drawer header to a fixed drawer-width zone so the
+                    // circle holds its resting spot (254pt) while the panel
+                    // animates full→300 on close, rather than following the
+                    // shrinking trailing edge. ponytail: 300 = RootView.drawerWidth.
+                    HStack(spacing: AppSpacing.sm) {
                         Text("LLM-iOS")
                             .font(AppFont.title2)
                             .foregroundStyle(AppColor.Text.primary)
@@ -50,10 +56,12 @@ struct ConversationSidebar: View {
                         Spacer(minLength: 0)
                         searchButton
                     }
+                    .frame(width: 300 - 2 * AppSpacing.lg, alignment: .leading)
+                    Spacer(minLength: 0)
                 }
-                .padding(.horizontal, AppSpacing.lg)
-                .padding(.vertical, AppSpacing.md)
             }
+            .padding(.horizontal, AppSpacing.lg)
+            .padding(.vertical, AppSpacing.md)
             // Magnifier crossfade (no travel), symmetric so open is the exact
             // reverse of close: whichever icon is fading IN waits (delay) for the
             // other to fade OUT first, in either direction. The placeholders
@@ -174,7 +182,13 @@ struct ConversationSidebar: View {
                 .contentShape(Rectangle())
         }
         .glassEffect(.regular, in: .circle)
-        .glassEffectID("search", in: glassNS)
+        // Pinned by the header layout, so it only fades — never travels. Timed to
+        // match the magnifier icon that rides on it (out fast on open, in with a
+        // slight delay on close, after the field has cleared).
+        .transition(.asymmetric(
+            insertion: .opacity.animation(.easeIn(duration: 0.15).delay(0.08)),
+            removal: .opacity.animation(.easeOut(duration: 0.1))
+        ))
         .accessibilityLabel("Search conversations")
     }
 
@@ -202,7 +216,16 @@ struct ConversationSidebar: View {
         .frame(height: 44)
         .frame(maxWidth: .infinity)
         .glassEffect(.regular, in: .capsule)
-        .glassEffectID("search", in: glassNS)
+        // Grow/shrink horizontally from the circle's resting spot (~0.77 across
+        // the field's width on this device), so open reads as the circle
+        // stretching into the field and close as the field collapsing back onto
+        // it — no travel. Inherits the panel's search animation (RootView).
+        // ponytail: 0.77 is tuned for phone widths; a GeometryReader anchor would
+        // generalise it if we ever ship on very different widths.
+        .transition(.modifier(
+            active: HScaleModifier(scale: 0.13, anchor: UnitPoint(x: 0.77, y: 0.5)),
+            identity: HScaleModifier(scale: 1, anchor: UnitPoint(x: 0.77, y: 0.5))
+        ).combined(with: .opacity))
     }
 
     private var closeSearchButton: some View {
@@ -252,7 +275,7 @@ struct ConversationSidebar: View {
                 Spacer(minLength: 0)
 
                 Button(action: onNewChat) {
-                    Label("New chat", systemImage: "square.and.pencil")
+                    Label("Chat", systemImage: "plus.bubble")
                         .font(AppFont.headline)
                         .foregroundStyle(AppColor.Text.inverse)
                         // Match the message field's 16pt internal inset (md) so
@@ -289,5 +312,17 @@ struct ConversationSidebar: View {
                 }
         }
         .accessibilityLabel("Account")
+    }
+}
+
+/// Horizontal-only scale for the search field's grow/shrink transition. A plain
+/// `.scale` transition is uniform (would squash the 44pt height too); this pins
+/// height and scales width from a chosen anchor so the field stretches out of /
+/// collapses onto the search circle's spot.
+private struct HScaleModifier: ViewModifier {
+    let scale: CGFloat
+    let anchor: UnitPoint
+    func body(content: Content) -> some View {
+        content.scaleEffect(x: scale, y: 1, anchor: anchor)
     }
 }
