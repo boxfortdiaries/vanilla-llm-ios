@@ -15,6 +15,8 @@ struct ConversationSidebar: View {
     @Binding var searchQuery: String
 
     @FocusState private var searchFocused: Bool
+    /// Account/settings sheet, presented from the bottom-bar avatar.
+    @State private var showProfile = false
 
     private var conversations: [Conversation] {
         let visible = store.conversations.filter { !$0.messages.isEmpty || $0.id == currentID }
@@ -126,6 +128,7 @@ struct ConversationSidebar: View {
             if isSearching { AppColor.Background.primary.ignoresSafeArea() }
         }
         .onChange(of: isSearching) { _, searching in searchFocused = searching }
+        .sheet(isPresented: $showProfile) { ProfileSheet() }
     }
 
     private func sectionHeader(_ title: String) -> some View {
@@ -297,10 +300,9 @@ struct ConversationSidebar: View {
     }
 
     /// Account/profile entry — initials circle (no user model in this
-    /// prototype, so initials are fixed). Placeholder action like the app's
-    /// other unwired affordances; wire to Settings when that route exists.
+    /// prototype, so initials are fixed). Opens the account/settings sheet.
     private var accountAvatar: some View {
-        Button {} label: {
+        Button { showProfile = true } label: {
             Circle()
                 // Surface.primary (.systemBackground), not Surface.elevated —
                 // the drawer backdrop is already secondarySystemBackground, so
