@@ -6,12 +6,11 @@ import SwiftUI
 struct ConversationView: View {
     @State private var viewModel: ConversationViewModel
     @State private var isAtBottom = true
-    @State private var isScrolled = false
     @State private var scrollToBottomTrigger = 0
-    @State private var isRenaming = false
-    @State private var renameText = ""
+    /// Owned here (not in PromptComposer) so the starter prompts can drop away
+    /// when the attachment tray opens, same as when the user starts typing.
+    @State private var isAttachmentExpanded = false
 
-    @Environment(NavigationCoordinator.self) private var navigationCoordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let suggestions: [(icon: String, text: String)] = [
@@ -29,46 +28,38 @@ struct ConversationView: View {
         _viewModel = State(initialValue: ConversationViewModel(conversationID: conversationID, store: store, aiService: aiService))
     }
 
+    // The nav bar, background, and rename flow live in `ChatCard` (above the
+    // conversation `.id`) so they survive conversation switches; this view is
+    // just the message content + composer, rebuilt per conversation.
     var body: some View {
+        // AppBackground here (not only in ChatCard) covers the NavigationStack's
+        // default `systemBackground`, which would otherwise show as a white seam
+        // below the nav bar. ChatCard's AppBackground covers the nav-bar strip;
+        // both are `Background.primary`, so the card reads as one surface.
         AppBackground {
-            VStack(spacing: 0) {
-                GlassNavigationBar(
-                    // No title in the chat — the drawer already names each
-                    // conversation; the bar stays just the menu + actions.
-                    title: nil,
-                    leadingAction: .init(icon: "line.3.horizontal", label: "Menu") {
-                        withAnimation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion)) {
-                            navigationCoordinator.toggleSidebar()
-                        }
-                    },
-                    trailingActions: trailingActions,
-                    state: isScrolled ? .scrolled : .default
-                )
+            ZStack(alignment: .bottom) {
+                if viewModel.messages.isEmpty {
+                    emptyConversation
+                } else {
+                    ConversationList(
+                        messages: viewModel.messages,
+                        isAtBottom: $isAtBottom,
+                        scrollToBottomTrigger: scrollToBottomTrigger
+                    )
+                }
 
-                ZStack(alignment: .bottom) {
-                    if viewModel.messages.isEmpty {
-                        emptyConversation
-                    } else {
-                        ConversationList(
-                            messages: viewModel.messages,
-                            isAtBottom: $isAtBottom,
-                            scrollToBottomTrigger: scrollToBottomTrigger
-                        )
-                    }
-
-                    if !isAtBottom {
-                        BottomAccessory {
-                            Button {
-                                scrollToBottomTrigger += 1
-                            } label: {
-                                Label("New messages", systemImage: "arrow.down")
-                                    .font(AppFont.footnote)
-                            }
-                            .tint(AppColor.Tint.cta)
+                if !isAtBottom {
+                    BottomAccessory {
+                        Button {
+                            scrollToBottomTrigger += 1
+                        } label: {
+                            Label("New messages", systemImage: "arrow.down")
+                                .font(AppFont.footnote)
                         }
-                        .padding(.bottom, AppSpacing.sm)
-                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8)))
+                        .tint(AppColor.Tint.cta)
                     }
+                    .padding(.bottom, AppSpacing.sm)
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8)))
                 }
             }
         }
@@ -79,6 +70,7 @@ struct ConversationView: View {
                 text: $viewModel.composerText,
                 attachments: viewModel.attachments,
                 isGenerating: viewModel.generationState == .generating,
+                isAttachmentExpanded: $isAttachmentExpanded,
                 onSend: viewModel.send,
                 onStop: viewModel.stop,
                 onAttach: {},
@@ -87,45 +79,22 @@ struct ConversationView: View {
                 }
             )
         }
-        .alert("Rename Conversation", isPresented: $isRenaming) {
-            TextField("Title", text: $renameText)
-            Button("Cancel", role: .cancel) {}
-            Button("Save") {
-                // Renaming mutates the shared store, so the overflow menu
-                // and any other reader reflect the change immediately.
-                viewModel.rename(to: renameText)
-            }
-        }
     }
 
-    private var trailingActions: [GlassNavigationBar.Action] {
-        [
-            // Quick new chat, but not on an empty conversation — you're already
-            // on a blank slate, so a "new chat" action there is a no-op-looking
-            // duplicate. Only surfaces once the chat has messages. The drawer
-            // (hamburger) remains the full browse/new-chat surface everywhere.
-            viewModel.messages.isEmpty ? nil :
-                .init(icon: "plus.bubble", label: "New Chat", identifier: "navNewChat", handler: navigationCoordinator.newChat),
-            .init(icon: "ellipsis", label: "More", menu: [
-                .init(title: "Rename", icon: "pencil") {
-                    renameText = viewModel.conversation.title
-                    isRenaming = true
-                },
-                .init(title: "Share", icon: "square.and.arrow.up") {},
-                .init(title: "Archive", icon: "archivebox", handler: navigationCoordinator.newChat),
-                .init(title: "Delete", icon: "trash", role: .destructive, handler: navigationCoordinator.newChat),
-            ]),
-        ].compactMap { $0 }
+    /// Starter prompts show on a blank slate — but not once the user is typing
+    /// or has opened the attachment tray (which takes over the composer row).
+    private var showSuggestions: Bool {
+        viewModel.composerText.isEmpty && !isAttachmentExpanded
     }
 
     private var emptyConversation: some View {
         // Blank slate (ChatGPT-style): no hero — just starter prompts as plain
         // icon+text rows anchored right above the composer. They drop away once
-        // the user starts typing.
+        // the user starts typing or opens the attachment tray.
         VStack(alignment: .leading, spacing: 0) {
             Spacer(minLength: 0)
 
-            if viewModel.composerText.isEmpty {
+            if showSuggestions {
                 // xxs inter-row spacing to match the drawer's conversation list
                 // (both rows also share the same sm vertical padding).
                 VStack(alignment: .leading, spacing: AppSpacing.xxs) {
@@ -160,7 +129,7 @@ struct ConversationView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         // Gentle, slightly slower fade for the starter prompts (easeInOut reads
         // softer than the spring token for a pure opacity change).
-        .animation(AppAnimation.resolve(.easeInOut(duration: 0.35), reduceMotion: reduceMotion), value: viewModel.composerText.isEmpty)
+        .animation(AppAnimation.resolve(.easeInOut(duration: 0.35), reduceMotion: reduceMotion), value: showSuggestions)
     }
 }
 

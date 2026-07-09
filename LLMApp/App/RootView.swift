@@ -27,6 +27,9 @@ struct RootView: View {
     @State private var containerWidth: CGFloat = 0
 
     private let drawerWidth: CGFloat = 300
+    /// Leading-corner radius the chat reaches when the drawer is fully open —
+    /// near an iPhone's display corner radius so it reads as a floating card.
+    private let chatCornerRadius: CGFloat = 52
 
     var body: some View {
         @Bindable var coordinator = container.navigationCoordinator
@@ -80,17 +83,11 @@ struct RootView: View {
             // globally animates the chat's glass nav buttons (jiggle).
             .animation(searchAnim, value: isSearching)
 
-            NavigationStack(path: Bindable(container.router).path) {
-                ConversationView(
-                    conversationID: coordinator.currentConversationID,
-                    store: container.conversationStore,
-                    aiService: container.aiService
-                )
-                .id(coordinator.currentConversationID)
-            }
-            .environment(container.appState)
-            .environment(container.router)
-            .environment(container.navigationCoordinator)
+            // Persistent chat card: nav bar + background live in ChatCard, above
+            // the conversation's `.id`, so switching conversations rebuilds only
+            // the message content — the nav bar survives and its trailing pill
+            // morphs instead of snapping.
+            ChatCard(container: container)
             .environment(\.navGlassInteractive, chatGlassInteractive)
             // Drop interactive glass on the nav buttons across a search
             // open/close (keep it off through the retract so the reveal doesn't
@@ -117,6 +114,25 @@ struct RootView: View {
                         .accessibilityLabel("Close sidebar")
                         .accessibilityAddTraits(.isButton)
                 }
+            }
+            // Round the leading (drawer-facing) corners into a card as the drawer
+            // opens: 0 when closed (full-screen, flush to the device edges) up to
+            // ~device radius when fully revealed. Trailing corners stay square —
+            // they're off-screen right whenever the drawer's open, so rounding
+            // them would never show. progress-driven, so it tracks the live drag.
+            //
+            // `.mask` with an `ignoresSafeArea` shape, not `.clipShape`: clipShape
+            // sizes its path to the safe-area frame and would inset the card top
+            // and bottom. The mask shape spans the full device height so only the
+            // corners round — the card stays edge-to-edge.
+            .mask {
+                UnevenRoundedRectangle(
+                    topLeadingRadius: progress * chatCornerRadius,
+                    bottomLeadingRadius: progress * chatCornerRadius,
+                    bottomTrailingRadius: 0,
+                    topTrailingRadius: 0
+                )
+                .ignoresSafeArea()
             }
             // Drop shadow separates the chat from the menu; leans left toward it.
             // Fades to 0 while searching (on searchAnim, below) so it eases out as
@@ -157,5 +173,80 @@ struct RootView: View {
                 }
         )
         .animation(anim, value: coordinator.isSidebarOpen)
+    }
+}
+
+/// Persistent chat "card": the nav bar and background live here, ABOVE the
+/// conversation's `.id`, so switching conversations rebuilds only the message
+/// content — the nav bar survives and its trailing glass pill morphs (New Chat
+/// ＋ … ⇄ …) instead of snapping. Owns the rename flow for the same reason, and
+/// drives the bar straight from the store (no per-conversation view model).
+private struct ChatCard: View {
+    let container: AppContainer
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isRenaming = false
+    @State private var renameText = ""
+
+    var body: some View {
+        @Bindable var coordinator = container.navigationCoordinator
+        let currentID = coordinator.currentConversationID
+        let isEmpty = container.conversationStore.conversation(id: currentID)?.messages.isEmpty ?? true
+
+        AppBackground {
+            VStack(spacing: 0) {
+                GlassNavigationBar(
+                    // No title — the drawer already names each conversation.
+                    title: nil,
+                    leadingAction: .init(icon: "line.3.horizontal", label: "Menu") {
+                        withAnimation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion)) {
+                            coordinator.toggleSidebar()
+                        }
+                    },
+                    trailingActions: trailingActions(currentID: currentID, isEmpty: isEmpty)
+                )
+                // Morph the trailing pill when the New Chat action appears/leaves
+                // (empty ⇄ non-empty) rather than snapping — the whole point of
+                // keeping the bar persistent.
+                .animation(.spring(duration: 0.4), value: isEmpty)
+
+                NavigationStack(path: Bindable(container.router).path) {
+                    ConversationView(
+                        conversationID: currentID,
+                        store: container.conversationStore,
+                        aiService: container.aiService
+                    )
+                    .id(currentID)
+                }
+            }
+        }
+        .environment(container.appState)
+        .environment(container.router)
+        .environment(container.navigationCoordinator)
+        .alert("Rename Conversation", isPresented: $isRenaming) {
+            TextField("Title", text: $renameText)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") {
+                let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { container.conversationStore.rename(currentID, to: trimmed) }
+            }
+        }
+    }
+
+    private func trailingActions(currentID: UUID, isEmpty: Bool) -> [GlassNavigationBar.Action] {
+        let coordinator = container.navigationCoordinator
+        return [
+            // Quick new chat, hidden on an empty conversation (already a blank
+            // slate). The drawer hamburger remains the full new-chat surface.
+            isEmpty ? nil : .init(icon: "plus.bubble", label: "New Chat", identifier: "navNewChat", handler: coordinator.newChat),
+            .init(icon: "ellipsis", label: "More", menu: [
+                .init(title: "Rename", icon: "pencil") {
+                    renameText = container.conversationStore.conversation(id: currentID)?.title ?? ""
+                    isRenaming = true
+                },
+                .init(title: "Share", icon: "square.and.arrow.up") {},
+                .init(title: "Archive", icon: "archivebox", handler: coordinator.newChat),
+                .init(title: "Delete", icon: "trash", role: .destructive, handler: coordinator.newChat),
+            ]),
+        ].compactMap { $0 }
     }
 }

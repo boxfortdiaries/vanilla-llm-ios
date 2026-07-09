@@ -56,8 +56,12 @@ struct ConversationSidebar: View {
                         Spacer(minLength: 0)
                         searchButton
                     }
+                    // Pin the content to drawer width, then left-align it in the
+                    // (possibly full-width) header. A trailing Spacer here would
+                    // sit `sm` past this block and overflow the drawer-width zone,
+                    // nudging the search circle ~6pt off the CTA's column below.
                     .frame(width: 300 - 2 * AppSpacing.lg, alignment: .leading)
-                    Spacer(minLength: 0)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .padding(.horizontal, AppSpacing.lg)

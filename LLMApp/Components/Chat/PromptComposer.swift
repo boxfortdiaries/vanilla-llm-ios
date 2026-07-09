@@ -10,6 +10,9 @@ struct PromptComposer: View {
     @Binding var text: String
     var attachments: [Attachment]
     var isGenerating: Bool
+    /// Whether the attachment source tray is open. Owned by the host so it can
+    /// react (e.g. drop the starter prompts) while this view drives the toggle.
+    @Binding var isAttachmentExpanded: Bool
     var placeholder: String = "Message"
     var onSend: () -> Void
     var onStop: () -> Void
@@ -19,7 +22,6 @@ struct PromptComposer: View {
     @FocusState private var isFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var glassNamespace
-    @State private var isAttachmentExpanded = false
     /// True once the text wraps past one line — squares off the field.
     @State private var isMultiline = false
 
@@ -123,6 +125,7 @@ struct PromptComposer: View {
                 text: .constant(""),
                 attachments: [],
                 isGenerating: false,
+                isAttachmentExpanded: .constant(false),
                 onSend: {}, onStop: {}, onAttach: {}, onRemoveAttachment: { _ in }
             )
         }
@@ -137,6 +140,7 @@ struct PromptComposer: View {
                 text: .constant("Explain quantum computing"),
                 attachments: [Attachment(type: .image, name: "diagram.png")],
                 isGenerating: false,
+                isAttachmentExpanded: .constant(false),
                 onSend: {}, onStop: {}, onAttach: {}, onRemoveAttachment: { _ in }
             )
         }
@@ -152,6 +156,7 @@ struct PromptComposer: View {
                 text: .constant(""),
                 attachments: [],
                 isGenerating: true,
+                isAttachmentExpanded: .constant(false),
                 onSend: {}, onStop: {}, onAttach: {}, onRemoveAttachment: { _ in }
             )
         }

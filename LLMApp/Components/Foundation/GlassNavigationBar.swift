@@ -92,11 +92,18 @@ struct GlassNavigationBar: View {
             // divider (ChatGPT-style). glassStyle keeps it jiggle-free during a
             // search reveal, same as the leading button.
             HStack(spacing: 0) {
-                ForEach(Array(trailingActions.enumerated()), id: \.element.id) { index, action in
+                // Keyed on the (stable) icon, not `Action.id` — the actions are
+                // rebuilt with fresh UUIDs every render, so a UUID key would
+                // re-create the pill each time and it could never animate. A
+                // stable key lets a segment insert/remove while the shared glass
+                // capsule morphs circle↔pill around it.
+                ForEach(Array(trailingActions.enumerated()), id: \.element.icon) { index, action in
                     if index > 0 {
                         Divider().frame(height: 22)
+                            .transition(.opacity)
                     }
                     trailingButton(action)
+                        .transition(.scale.combined(with: .opacity))
                 }
             }
             .glassEffect(glassStyle, in: .capsule)
