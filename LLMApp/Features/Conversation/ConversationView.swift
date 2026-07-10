@@ -11,6 +11,10 @@ struct ConversationView: View {
     /// when the attachment tray opens, same as when the user starts typing.
     @State private var isAttachmentExpanded = false
 
+    /// Reports the composer's on-screen frame to the drawer gesture so a drag
+    /// starting on it (e.g. scrolling the attachment tray) doesn't open the drawer.
+    var onComposerFrame: (CGRect) -> Void = { _ in }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let suggestions: [(icon: String, text: String)] = [
@@ -24,8 +28,9 @@ struct ConversationView: View {
         .standard(viewModel: viewModel)
     }
 
-    init(conversationID: UUID, store: ConversationStore, aiService: AIService) {
+    init(conversationID: UUID, store: ConversationStore, aiService: AIService, onComposerFrame: @escaping (CGRect) -> Void = { _ in }) {
         _viewModel = State(initialValue: ConversationViewModel(conversationID: conversationID, store: store, aiService: aiService))
+        self.onComposerFrame = onComposerFrame
     }
 
     // The nav bar, background, and rename flow live in `ChatCard` (above the
@@ -73,11 +78,20 @@ struct ConversationView: View {
                 isAttachmentExpanded: $isAttachmentExpanded,
                 onSend: viewModel.send,
                 onStop: viewModel.stop,
-                onAttach: {},
+                onAddAttachment: { viewModel.attachments.append($0) },
                 onRemoveAttachment: { attachment in
                     viewModel.attachments.removeAll { $0.id == attachment.id }
                 }
             )
+            // Report the composer's screen frame up so the drawer's open-drag can
+            // skip drags that start here (letting the attachment tray scroll).
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.onChange(of: proxy.frame(in: .global), initial: true) { _, frame in
+                        onComposerFrame(frame)
+                    }
+                }
+            }
         }
     }
 

@@ -38,21 +38,25 @@ final class ConversationViewModel {
 
     func send() {
         let trimmed = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        // Allow an attachments-only message (no text), as ChatGPT does.
+        guard !trimmed.isEmpty || !attachments.isEmpty else { return }
 
         var updated = conversation
         let userMessage = Message(role: .user, content: trimmed, attachments: attachments, status: .sending)
         updated.messages.append(userMessage)
         updated.updatedAt = .now
         if updated.title == "New Conversation" {
-            updated.title = String(trimmed.prefix(40))
+            updated.title = trimmed.isEmpty ? (attachments.first?.name ?? "Attachment") : String(trimmed.prefix(40))
         }
         store.upsert(updated)
 
         composerText = ""
         attachments = []
 
-        generate(triggeringMessageID: userMessage.id, prompt: trimmed, context: updated.messages)
+        // Fall back to a short stand-in prompt so the mock service still replies
+        // to an images-only turn.
+        let prompt = trimmed.isEmpty ? "(sent \(userMessage.attachments.count) attachment(s))" : trimmed
+        generate(triggeringMessageID: userMessage.id, prompt: prompt, context: updated.messages)
     }
 
     /// Handles both failure modes: a user message that failed to send

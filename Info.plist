@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Not in the INFOPLIST_KEY_ allowlist, so it has to live in a real plist.
+	     With GENERATE_INFOPLIST_FILE=YES this file is merged with the generated
+	     keys. Exposes Documents in Files → the DEBUG sample files are pickable. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+</dict>
+</plist>

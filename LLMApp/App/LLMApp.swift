@@ -7,6 +7,7 @@ struct LLMApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(container: container)
+                .task { SampleFiles.seedIfNeeded() }
         }
     }
 }

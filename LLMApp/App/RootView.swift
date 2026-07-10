@@ -15,6 +15,9 @@ struct RootView: View {
 
     /// Live horizontal finger delta while dragging the chat; 0 when settled.
     @State private var dragTranslation: CGFloat = 0
+    /// True while a drag we own is in flight, so `onEnded` only snaps for drags
+    /// we actually tracked (not ones the edge/axis guard ignored).
+    @State private var drawerDragActive = false
 
     /// Full-screen conversation search, launched from the drawer's search button.
     @State private var isSearching = false
@@ -25,6 +28,13 @@ struct RootView: View {
     /// Full width of the root, so searching can push the chat *entirely* off the
     /// right edge (ChatGPT pattern) rather than overlaying the search on top.
     @State private var containerWidth: CGFloat = 0
+
+    /// On-screen frame of the composer, reported up from it. A closed-drawer
+    /// open-drag that starts on the composer is ignored so the attachment tray's
+    /// own horizontal scroll isn't hijacked into dragging the chat open. Passed
+    /// via a callback (not a PreferenceKey — the NavigationStack between here and
+    /// the composer swallows preferences crossing its boundary).
+    @State private var composerFrame: CGRect = .zero
 
     private let drawerWidth: CGFloat = 300
     /// Leading-corner radius the chat reaches when the drawer is fully open —
@@ -87,7 +97,7 @@ struct RootView: View {
             // the conversation's `.id`, so switching conversations rebuilds only
             // the message content — the nav bar survives and its trailing pill
             // morphs instead of snapping.
-            ChatCard(container: container)
+            ChatCard(container: container, onComposerFrame: { composerFrame = $0 })
             .environment(\.navGlassInteractive, chatGlassInteractive)
             // Drop interactive glass on the nav buttons across a search
             // open/close (keep it off through the retract so the reveal doesn't
@@ -155,15 +165,20 @@ struct RootView: View {
         }
         // Drag the chat to open/close the drawer. `simultaneousGesture` so it
         // never blocks vertical scrolling or button taps beneath it; we only
-        // act on horizontal-dominant drags. On release, project the throw and
-        // snap past the halfway point.
+        // act on horizontal-dominant drags. A closed-drawer open-drag that
+        // starts on the composer is skipped so the attachment tray keeps its
+        // own horizontal scroll. On release, project the throw and snap past half.
         .simultaneousGesture(
-            DragGesture(minimumDistance: 10)
+            DragGesture(minimumDistance: 10, coordinateSpace: .global)
                 .onChanged { value in
                     guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    if !coordinator.isSidebarOpen && composerFrame.contains(value.startLocation) { return }
+                    drawerDragActive = true
                     dragTranslation = value.translation.width
                 }
                 .onEnded { value in
+                    guard drawerDragActive else { return }
+                    drawerDragActive = false
                     let projected = base + value.predictedEndTranslation.width
                     let shouldOpen = projected > drawerWidth / 2
                     withAnimation(anim) {
@@ -183,6 +198,8 @@ struct RootView: View {
 /// drives the bar straight from the store (no per-conversation view model).
 private struct ChatCard: View {
     let container: AppContainer
+    /// Reports the composer's on-screen frame up to RootView's drawer gesture.
+    var onComposerFrame: (CGRect) -> Void = { _ in }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isRenaming = false
     @State private var renameText = ""
@@ -213,7 +230,8 @@ private struct ChatCard: View {
                     ConversationView(
                         conversationID: currentID,
                         store: container.conversationStore,
-                        aiService: container.aiService
+                        aiService: container.aiService,
+                        onComposerFrame: onComposerFrame
                     )
                     .id(currentID)
                 }

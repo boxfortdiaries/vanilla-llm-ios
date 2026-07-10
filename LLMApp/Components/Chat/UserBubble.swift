@@ -9,22 +9,24 @@ struct UserBubble: View {
 
     var body: some View {
         VStack(alignment: .trailing, spacing: AppSpacing.xs) {
+            // Sent attachments: the composer's tray, scaled up and read-only,
+            // as a full-width row that scrolls with the same trailing fade.
             if !message.attachments.isEmpty {
-                HStack(spacing: AppSpacing.xs) {
-                    ForEach(message.attachments) { attachment in
-                        Chip(text: attachment.name, icon: attachment.type == .image ? "photo" : "doc")
-                    }
-                }
+                AttachmentTray(attachments: message.attachments, tileSize: 112, corner: AppRadius.medium)
             }
-            Text(message.content)
-                .font(AppFont.body)
-                .foregroundStyle(AppColor.Text.primary)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(AppColor.Surface.bubble, in: .rect(cornerRadius: AppRadius.medium))
+            // No empty bubble on an attachments-only message.
+            if !message.content.isEmpty {
+                Text(message.content)
+                    .font(AppFont.body)
+                    .foregroundStyle(AppColor.Text.primary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(AppColor.Surface.bubble, in: .rect(cornerRadius: AppRadius.medium))
+                    // Indent only the text bubble; the attachment row stays full-width.
+                    .padding(.leading, 40)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.leading, 40)
     }
 }
 
