@@ -15,7 +15,23 @@ struct ConversationView: View {
     /// starting on it (e.g. scrolling the attachment tray) doesn't open the drawer.
     var onComposerFrame: (CGRect) -> Void = { _ in }
 
+    // Send fly-up: on send, copies of the attachment tiles spring from their
+    // composer frame up to their new-message frame, over everything, while the
+    // real tiles stay hidden until the copies land.
+    @State private var attachmentFrames: [UUID: CGRect] = [:]
+    @State private var flyingItems: [FlyingAttachment] = []
+    @State private var flyEngaged = false
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// One attachment in flight: its captured composer frame (start) and, once
+    /// the message lays out, its message frame (end).
+    private struct FlyingAttachment: Identifiable {
+        let attachment: Attachment
+        let start: CGRect
+        var end: CGRect?
+        var id: UUID { attachment.id }
+    }
 
     private let suggestions: [(icon: String, text: String)] = [
         ("lightbulb", "Explain a complex topic simply"),
@@ -76,7 +92,7 @@ struct ConversationView: View {
                 attachments: viewModel.attachments,
                 isGenerating: viewModel.generationState == .generating,
                 isAttachmentExpanded: $isAttachmentExpanded,
-                onSend: viewModel.send,
+                onSend: handleSend,
                 onStop: viewModel.stop,
                 onAddAttachment: { viewModel.attachments.append($0) },
                 onRemoveAttachment: { attachment in
@@ -91,6 +107,81 @@ struct ConversationView: View {
                         onComposerFrame(frame)
                     }
                 }
+            }
+        }
+        // Collect every attachment tile's screen frame (composer + messages).
+        .onPreferenceChange(AttachmentFramesKey.self) { frames in
+            attachmentFrames = frames
+        }
+        .environment(\.hiddenAttachmentIDs, Set(flyingItems.map(\.id)))
+        // Flying copies, above everything (incl. the composer) and unclipped.
+        .overlay {
+            ZStack {
+                ForEach(flyingItems) { item in
+                    let frame = (flyEngaged ? item.end : item.start) ?? item.start
+                    let destHeight = item.end?.height ?? item.start.height
+                    AttachmentTileView(attachment: item.attachment, tileSize: destHeight, corner: AppRadius.medium)
+                        .scaleEffect(frame.height / destHeight, anchor: .center)
+                        .position(x: frame.midX, y: frame.midY)
+                }
+            }
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// Send with a fly-up when there are attachments: capture their composer
+    /// frames, send (which pins the message to the top), let the layout settle,
+    /// then spring copies up to the message's final frame. Falls back to a plain
+    /// send if any frame is missing.
+    private func handleSend() {
+        let sending = viewModel.attachments
+        let starts = sending.compactMap { att in attachmentFrames[att.id].map { (att, $0) } }
+        let canFly = !sending.isEmpty && starts.count == sending.count
+        // The message pins to the top instantly (50ms defer + one layout pass),
+        // so a short wait is enough before we read its settled frame.
+        let settle: Duration = .milliseconds(170)
+        guard viewModel.send() != nil else { return }
+
+        guard canFly else {
+            // Text-only: let it pin to the top, then start the reply below it.
+            Task { @MainActor in
+                try? await Task.sleep(for: settle)
+                viewModel.respond()
+            }
+            return
+        }
+
+        flyingItems = starts.map { FlyingAttachment(attachment: $0.0, start: $0.1, end: nil) }
+        flyEngaged = false
+
+        Task { @MainActor in
+            // Wait for the message to settle at the top (layout is stable — the
+            // reply hasn't started yet), read its final frame, then fly there.
+            try? await Task.sleep(for: settle)
+            var updated = flyingItems
+            var ready = !updated.isEmpty
+            for i in updated.indices {
+                if let f = attachmentFrames[updated[i].id], f != updated[i].start {
+                    updated[i].end = f
+                } else {
+                    ready = false
+                }
+            }
+            guard ready else {
+                flyingItems = []
+                flyEngaged = false
+                viewModel.respond()
+                return
+            }
+            flyingItems = updated
+            // Fly the copies up, and only once they land does the reply begin.
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.78)) {
+                flyEngaged = true
+            } completion: {
+                flyingItems = []
+                flyEngaged = false
+                viewModel.respond()
             }
         }
     }

@@ -36,10 +36,18 @@ final class ConversationViewModel {
         store.upsert(updated)
     }
 
-    func send() {
+    /// Reply queued by `send`, started later by `respond` — so the view can pin
+    /// the user message to the top (and finish any attachment fly-up) before the
+    /// assistant's answer streams into the space below it.
+    private var pendingReply: (id: UUID, prompt: String)?
+
+    /// Appends the user message (pinned to the top by the list) and queues the
+    /// reply. Returns the new message's id, or nil if there was nothing to send.
+    @discardableResult
+    func send() -> UUID? {
         let trimmed = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
         // Allow an attachments-only message (no text), as ChatGPT does.
-        guard !trimmed.isEmpty || !attachments.isEmpty else { return }
+        guard !trimmed.isEmpty || !attachments.isEmpty else { return nil }
 
         var updated = conversation
         let userMessage = Message(role: .user, content: trimmed, attachments: attachments, status: .sending)
@@ -56,7 +64,16 @@ final class ConversationViewModel {
         // Fall back to a short stand-in prompt so the mock service still replies
         // to an images-only turn.
         let prompt = trimmed.isEmpty ? "(sent \(userMessage.attachments.count) attachment(s))" : trimmed
-        generate(triggeringMessageID: userMessage.id, prompt: prompt, context: updated.messages)
+        pendingReply = (userMessage.id, prompt)
+        return userMessage.id
+    }
+
+    /// Starts the assistant's reply to the just-sent message. Called by the view
+    /// once the user message has settled at the top (and any fly-up has landed).
+    func respond() {
+        guard let pending = pendingReply else { return }
+        pendingReply = nil
+        generate(triggeringMessageID: pending.id, prompt: pending.prompt, context: conversation.messages)
     }
 
     /// Handles both failure modes: a user message that failed to send

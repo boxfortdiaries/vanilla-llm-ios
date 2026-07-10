@@ -1,11 +1,9 @@
 import SwiftUI
-import UIKit
 
 /// Horizontally-scrolling row of attachments, used both in the composer (small,
-/// removable) and in a sent message (larger, read-only). Images render as a
-/// thumbnail (loaded from the attachment's temp-file `url`); files render as a
-/// same-height card with a type icon, name, and kind. Everything scales off
-/// `tileSize`, tuned so the default 56pt composer row stays pixel-identical.
+/// removable) and in a sent message (larger, read-only). Each tile reports its
+/// on-screen frame (keyed by id) so the send fly-up can animate a copy between
+/// the composer and the message, and hides itself while that copy is in flight.
 struct AttachmentTray: View {
     var attachments: [Attachment]
     var tileSize: CGFloat = 56
@@ -13,19 +11,30 @@ struct AttachmentTray: View {
     /// nil → read-only (no per-tile remove button), as in a sent message.
     var onRemove: ((Attachment) -> Void)? = nil
 
+    /// Ids whose fly-up copy is currently airborne — hide the real tile so only
+    /// the flying copy shows, then reveal it when the copy lands.
+    @Environment(\.hiddenAttachmentIDs) private var hiddenIDs
+
     /// Width of the trailing dissolve so overflowing tiles fade out instead of
     /// hard-clipping at the edge (same technique as ProfileSheet's top fade).
     private let trailingFade: CGFloat = 16
-    // Derived so a scaled-up tray keeps the composer's proportions (exact at 56).
-    private var iconSize: CGFloat { tileSize * 0.643 }
-    private var cardMaxWidth: CGFloat { min(tileSize * 3.93, 300) }
-    private var isLarge: Bool { tileSize >= 88 }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: AppSpacing.sm) {
                 ForEach(attachments) { attachment in
-                    cell(attachment)
+                    AttachmentTileView(attachment: attachment, tileSize: tileSize, corner: corner)
+                        .overlay(alignment: .topTrailing) { removeButton(attachment) }
+                        // Publish this tile's screen frame for the send fly-up.
+                        .background {
+                            GeometryReader { proxy in
+                                Color.clear.preference(
+                                    key: AttachmentFramesKey.self,
+                                    value: [attachment.id: proxy.frame(in: .global)]
+                                )
+                            }
+                        }
+                        .opacity(hiddenIDs.contains(attachment.id) ? 0 : 1)
                 }
             }
             .padding(.vertical, 2)
@@ -39,63 +48,6 @@ struct AttachmentTray: View {
                     .frame(width: trailingFade)
             }
         }
-    }
-
-    @ViewBuilder
-    private func cell(_ attachment: Attachment) -> some View {
-        if attachment.type == .image, let image = thumbnail(attachment) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: tileSize, height: tileSize)
-                .clipShape(RoundedRectangle(cornerRadius: corner))
-                .overlay {
-                    RoundedRectangle(cornerRadius: corner)
-                        .strokeBorder(AppColor.Separator.subtle, lineWidth: 1)
-                }
-                .overlay(alignment: .topTrailing) { removeButton(attachment) }
-        } else {
-            fileCard(attachment)
-        }
-    }
-
-    private func fileCard(_ attachment: Attachment) -> some View {
-        let ext = (attachment.name as NSString).pathExtension
-        let icon = fileIcon(ext)
-        // Match the icon's horizontal margins (leading + gap to text) to the
-        // margin the frame height leaves above/below it, so it's evenly inset.
-        let inset = (tileSize - iconSize) / 2
-        return HStack(spacing: inset) {
-            ZStack {
-                RoundedRectangle(cornerRadius: iconSize * 0.167).fill(icon.color.opacity(0.15))
-                Image(systemName: icon.symbol)
-                    .font(.system(size: iconSize * 0.5, weight: .medium))
-                    .foregroundStyle(icon.color)
-            }
-            .frame(width: iconSize, height: iconSize)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(attachment.name)
-                    .font(isLarge ? .system(size: 17) : AppFont.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundStyle(AppColor.Text.primary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Text(ext.isEmpty ? "File" : ext.uppercased())
-                    .font(isLarge ? .system(size: 13) : AppFont.caption)
-                    .foregroundStyle(AppColor.Text.secondary)
-            }
-        }
-        .padding(.leading, inset)
-        .padding(.trailing, AppSpacing.sm)
-        .frame(height: tileSize)
-        .frame(maxWidth: cardMaxWidth)
-        .background(AppColor.Surface.primary, in: RoundedRectangle(cornerRadius: corner))
-        .overlay {
-            RoundedRectangle(cornerRadius: corner)
-                .strokeBorder(AppColor.Separator.subtle, lineWidth: 1)
-        }
-        .overlay(alignment: .topTrailing) { removeButton(attachment) }
     }
 
     /// Corner remove button — white glyph on a dark scrim so it reads on both a
@@ -112,24 +64,27 @@ struct AttachmentTray: View {
             .padding(4)
         }
     }
+}
 
-    private func thumbnail(_ attachment: Attachment) -> UIImage? {
-        guard let url = attachment.url else { return nil }
-        return UIImage(contentsOfFile: url.path)
+/// Screen frames of every on-screen attachment tile, keyed by attachment id, so
+/// the send fly-up can read the composer's start frame and the message's end frame.
+struct AttachmentFramesKey: PreferenceKey {
+    static let defaultValue: [UUID: CGRect] = [:]
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
+}
 
-    /// SF Symbol + tint per common file kind — mirrors the color coding iOS uses
-    /// for documents so the type reads at a glance.
-    private func fileIcon(_ ext: String) -> (symbol: String, color: Color) {
-        switch ext.lowercased() {
-        case "pdf": return ("doc.fill", .red)
-        case "csv", "xls", "xlsx", "numbers": return ("tablecells.fill", .green)
-        case "doc", "docx", "pages", "rtf": return ("doc.fill", .blue)
-        case "txt", "md", "text": return ("doc.text.fill", AppColor.Text.secondary)
-        case "key", "ppt", "pptx": return ("rectangle.on.rectangle.fill", .orange)
-        case "zip", "gz", "tar": return ("doc.zipper", AppColor.Text.secondary)
-        default: return ("doc.fill", AppColor.Text.secondary)
-        }
+/// Attachment ids to hide (their fly-up copy is airborne), passed down so both
+/// the composer's tray and the sent message's tray hide the matching real tile.
+struct HiddenAttachmentIDsKey: EnvironmentKey {
+    static let defaultValue: Set<UUID> = []
+}
+
+extension EnvironmentValues {
+    var hiddenAttachmentIDs: Set<UUID> {
+        get { self[HiddenAttachmentIDsKey.self] }
+        set { self[HiddenAttachmentIDsKey.self] = newValue }
     }
 }
 
