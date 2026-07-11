@@ -11,40 +11,66 @@ import SwiftUI
 /// library if this ever needs to handle arbitrary markdown.
 struct MarkdownView: View {
     var content: String
+    /// True to play the top-to-bottom cascade reveal once this view appears —
+    /// set only for a reply that just finished streaming (see
+    /// StreamingMessage). Off for messages loaded already-complete from
+    /// history, which render fully visible immediately with no animation.
+    var animateReveal: Bool = false
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var revealed = false
+
+    private var revealing: Bool { animateReveal && !reduceMotion }
+    // Each block's own sweep takes this long; the next block starts this much
+    // after the previous one — shorter than the duration, so adjacent blocks'
+    // sweeps overlap and read as one continuous cascade, not a relay.
+    private static let blockDuration: Double = 1.1
+    private static let blockStagger: Double = 0.42
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppSpacing.sm) {
-            ForEach(Self.parseBlocks(content)) { block in
+            // Keyed by position, not content — see StreamingMessage: the whole
+            // block only renders once content is final, but position-based
+            // keys are still the correct default for a ForEach over parsed
+            // blocks (stable identity if this is ever fed growing text again).
+            ForEach(Array(Self.parseBlocks(content).enumerated()), id: \.offset) { index, block in
+                let shown = !revealing || revealed
+                let blockAnimation = revealing
+                    ? Animation.easeOut(duration: Self.blockDuration).delay(Double(index) * Self.blockStagger)
+                    : nil
                 switch block {
                 case .heading(let text, let level):
                     Text(Self.inline(text))
                         .font(level <= 1 ? AppFont.title2 : AppFont.headline)
+                        .textRenderer(CascadeRevealRenderer(progress: shown ? 1 : 0))
+                        .animation(blockAnimation, value: revealed)
                 case .paragraph(let text):
                     Text(Self.inline(text))
                         .font(AppFont.body)
+                        .textRenderer(CascadeRevealRenderer(progress: shown ? 1 : 0))
+                        .animation(blockAnimation, value: revealed)
                 case .code(let text, let language):
                     CodeBlock(code: text, language: language)
+                        .opacity(shown ? 1 : 0)
+                        .animation(blockAnimation, value: revealed)
                 case .table(let rows):
                     TableView(rows: rows)
+                        .opacity(shown ? 1 : 0)
+                        .animation(blockAnimation, value: revealed)
                 }
             }
         }
+        .onAppear {
+            guard revealing else { return }
+            revealed = true
+        }
     }
 
-    private enum Block: Identifiable {
+    private enum Block {
         case heading(String, level: Int)
         case paragraph(String)
         case code(String, language: String?)
         case table([[String]])
-
-        var id: String {
-            switch self {
-            case .heading(let text, let level): "h\(level)-\(text)"
-            case .paragraph(let text): "p-\(text)"
-            case .code(let text, _): "c-\(text)"
-            case .table(let rows): "t-\(rows.count)-\(rows.first?.count ?? 0)"
-            }
-        }
     }
 
     private static func inline(_ text: String) -> AttributedString {
