@@ -10,28 +10,15 @@ struct ConversationView: View {
     /// Owned here (not in PromptComposer) so the starter prompts can drop away
     /// when the attachment tray opens, same as when the user starts typing.
     @State private var isAttachmentExpanded = false
+    /// Bottom edge of the floating header (from ChatCard), so the list rests its
+    /// content below it and the top fade lines up with it.
+    var headerHeight: CGFloat = 0
 
     /// Reports the composer's on-screen frame to the drawer gesture so a drag
     /// starting on it (e.g. scrolling the attachment tray) doesn't open the drawer.
     var onComposerFrame: (CGRect) -> Void = { _ in }
 
-    // Send fly-up: on send, copies of the attachment tiles spring from their
-    // composer frame up to their new-message frame, over everything, while the
-    // real tiles stay hidden until the copies land.
-    @State private var attachmentFrames: [UUID: CGRect] = [:]
-    @State private var flyingItems: [FlyingAttachment] = []
-    @State private var flyEngaged = false
-
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    /// One attachment in flight: its captured composer frame (start) and, once
-    /// the message lays out, its message frame (end).
-    private struct FlyingAttachment: Identifiable {
-        let attachment: Attachment
-        let start: CGRect
-        var end: CGRect?
-        var id: UUID { attachment.id }
-    }
 
     private let suggestions: [(icon: String, text: String)] = [
         ("lightbulb", "Explain a complex topic simply"),
@@ -44,8 +31,9 @@ struct ConversationView: View {
         .standard(viewModel: viewModel)
     }
 
-    init(conversationID: UUID, store: ConversationStore, aiService: AIService, onComposerFrame: @escaping (CGRect) -> Void = { _ in }) {
+    init(conversationID: UUID, store: ConversationStore, aiService: AIService, headerHeight: CGFloat = 0, onComposerFrame: @escaping (CGRect) -> Void = { _ in }) {
         _viewModel = State(initialValue: ConversationViewModel(conversationID: conversationID, store: store, aiService: aiService))
+        self.headerHeight = headerHeight
         self.onComposerFrame = onComposerFrame
     }
 
@@ -65,8 +53,20 @@ struct ConversationView: View {
                     ConversationList(
                         messages: viewModel.messages,
                         isAtBottom: $isAtBottom,
-                        scrollToBottomTrigger: scrollToBottomTrigger
+                        scrollToBottomTrigger: scrollToBottomTrigger,
+                        topInset: headerHeight + AppSpacing.lg,
+                        bottomInset: 0
                     )
+                    // Dissolve the conversation into the background at the top
+                    // (under the header) and bottom (above the composer) instead
+                    // of hard edges — same fade technique as the profile sheet.
+                    .mask(conversationFade)
+                    // Extend the masked list to the true device bottom (behind the
+                    // composer, which insets this view's safe area). Outermost so the
+                    // mask is sized full-screen too — its bottom gradient lands at the
+                    // screen edge and the conversation dissolves behind the composer,
+                    // rather than being clipped at the composer's top edge.
+                    .ignoresSafeArea(.container, edges: .bottom)
                 }
 
                 if !isAtBottom {
@@ -109,80 +109,40 @@ struct ConversationView: View {
                 }
             }
         }
-        // Collect every attachment tile's screen frame (composer + messages).
-        .onPreferenceChange(AttachmentFramesKey.self) { frames in
-            attachmentFrames = frames
+    }
+
+    /// Cohesive rise: the whole message — text and attachments as one unit —
+    /// animates into its pinned top spot (via the list's insertion transition),
+    /// then the reply starts streaming into the space below it.
+    private func handleSend() {
+        // Hold the reply until the push-up scroll + rise have fully settled, so it
+        // can't start mid-scroll and jerk the message. A first message has no
+        // push-up, so it needs less.
+        let settle: Duration = .milliseconds(viewModel.messages.isEmpty ? 340 : 620)
+        withAnimation(AppAnimation.resolve(.spring(response: 0.42, dampingFraction: 0.82), reduceMotion: reduceMotion)) {
+            _ = viewModel.send()
         }
-        .environment(\.hiddenAttachmentIDs, Set(flyingItems.map(\.id)))
-        // Flying copies, above everything (incl. the composer) and unclipped.
-        .overlay {
-            ZStack {
-                ForEach(flyingItems) { item in
-                    let frame = (flyEngaged ? item.end : item.start) ?? item.start
-                    let destHeight = item.end?.height ?? item.start.height
-                    AttachmentTileView(attachment: item.attachment, tileSize: destHeight, corner: AppRadius.medium)
-                        .scaleEffect(frame.height / destHeight, anchor: .center)
-                        .position(x: frame.midX, y: frame.midY)
-                }
-            }
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
+        Task { @MainActor in
+            try? await Task.sleep(for: settle)
+            viewModel.respond()
         }
     }
 
-    /// Send with a fly-up when there are attachments: capture their composer
-    /// frames, send (which pins the message to the top), let the layout settle,
-    /// then spring copies up to the message's final frame. Falls back to a plain
-    /// send if any frame is missing.
-    private func handleSend() {
-        let sending = viewModel.attachments
-        let starts = sending.compactMap { att in attachmentFrames[att.id].map { (att, $0) } }
-        let canFly = !sending.isEmpty && starts.count == sending.count
-        // The message pins to the top instantly (50ms defer + one layout pass),
-        // so a short wait is enough before we read its settled frame.
-        let settle: Duration = .milliseconds(170)
-        guard viewModel.send() != nil else { return }
-
-        guard canFly else {
-            // Text-only: let it pin to the top, then start the reply below it.
-            Task { @MainActor in
-                try? await Task.sleep(for: settle)
-                viewModel.respond()
-            }
-            return
-        }
-
-        flyingItems = starts.map { FlyingAttachment(attachment: $0.0, start: $0.1, end: nil) }
-        flyEngaged = false
-
-        Task { @MainActor in
-            // Wait for the message to settle at the top (layout is stable — the
-            // reply hasn't started yet), read its final frame, then fly there.
-            try? await Task.sleep(for: settle)
-            var updated = flyingItems
-            var ready = !updated.isEmpty
-            for i in updated.indices {
-                if let f = attachmentFrames[updated[i].id], f != updated[i].start {
-                    updated[i].end = f
-                } else {
-                    ready = false
-                }
-            }
-            guard ready else {
-                flyingItems = []
-                flyEngaged = false
-                viewModel.respond()
-                return
-            }
-            flyingItems = updated
-            // Fly the copies up, and only once they land does the reply begin.
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.78)) {
-                flyEngaged = true
-            } completion: {
-                flyingItems = []
-                flyEngaged = false
-                viewModel.respond()
-            }
+    /// Top + bottom fade for the message list: clear → opaque over the top band
+    /// so messages dissolve under the header, opaque → clear over the bottom band
+    /// so they dissolve into the composer rather than colliding with it.
+    private var conversationFade: some View {
+        // Exact mirror top and bottom: one gentle gradient of the same height at
+        // each edge, each pinned to its edge of the screen frame. The middle
+        // Rectangle expands to fill, so the bottom gradient sits flush at the
+        // screen bottom (no clear band pushing it up, no hard-edged background).
+        let fade = headerHeight * 0.75
+        return VStack(spacing: 0) {
+            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                .frame(height: fade)
+            Rectangle().fill(.black)
+            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                .frame(height: fade)
         }
     }
 

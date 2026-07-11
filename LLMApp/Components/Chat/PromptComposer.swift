@@ -104,9 +104,12 @@ struct PromptComposer: View {
         // top padding give a snug ~13pt gap that pairs the tiles with the text.
         return VStack(spacing: 0) {
             if !attachments.isEmpty {
-                AttachmentTray(attachments: attachments, onRemove: onRemoveAttachment)
+                AttachmentTray(attachments: attachments, tileSpacing: 8, onRemove: onRemoveAttachment)
                     .padding(.horizontal, 10)
                     .padding(.top, 10)
+                    // Fade the tray out where it sits on send — not slide down as
+                    // the field collapses.
+                    .transition(.opacity)
             }
             TextField(placeholder, text: $text, axis: .vertical)
                 .font(AppFont.body)
@@ -168,24 +171,41 @@ struct PromptComposer: View {
         guard !items.isEmpty else { return }
         Task {
             for item in items {
-                if let data = try? await item.loadTransferable(type: Data.self),
-                   let image = UIImage(data: data) {
-                    await MainActor.run { addImage(image) }
-                }
+                guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+                // Decode/downscale/encode/write off the main thread, then append.
+                // The tiles still land one-by-one (staggered, as each finishes), but
+                // that CPU work no longer runs on the main thread mid-insert — which
+                // was stuttering the previous tile's animation.
+                guard let attachment = await Task.detached(priority: .userInitiated, operation: {
+                    Self.imageAttachment(fromData: data)
+                }).value else { continue }
+                onAddAttachment(attachment)
             }
-            await MainActor.run { pickedPhotos = [] }
+            pickedPhotos = []
         }
     }
 
-    /// Downscale, JPEG-encode, and stash to a temp file so the attachment
-    /// references a real (small) file the tray can thumbnail.
+    /// Camera capture (single image). One image, no staggered animation to stutter,
+    /// so building it inline on the main actor is fine.
     private func addImage(_ image: UIImage) {
+        if let attachment = Self.imageAttachment(from: image) { onAddAttachment(attachment) }
+    }
+
+    /// Downscale, JPEG-encode, and stash to a temp file so the attachment
+    /// references a real (small) file the tray can thumbnail. `nonisolated static`
+    /// so it can run on a background task without touching main-actor state.
+    private nonisolated static func imageAttachment(fromData data: Data) -> Attachment? {
+        guard let image = UIImage(data: data) else { return nil }
+        return imageAttachment(from: image)
+    }
+
+    private nonisolated static func imageAttachment(from image: UIImage) -> Attachment? {
         let scaled = downscaled(image, maxDimension: 1024)
-        guard let data = scaled.jpegData(compressionQuality: 0.8) else { return }
+        guard let data = scaled.jpegData(compressionQuality: 0.8) else { return nil }
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
-        guard (try? data.write(to: url)) != nil else { return }
-        onAddAttachment(Attachment(type: .image, name: "Photo", url: url))
+        guard (try? data.write(to: url)) != nil else { return nil }
+        return Attachment(type: .image, name: "Photo", url: url)
     }
 
     private func addFiles(_ urls: [URL]) {
@@ -206,7 +226,7 @@ struct PromptComposer: View {
         isAttachmentExpanded = false
     }
 
-    private func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
+    private nonisolated static func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
         let longest = max(image.size.width, image.size.height)
         guard longest > maxDimension else { return image }
         let scale = maxDimension / longest

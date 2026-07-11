@@ -12,7 +12,10 @@ struct UserBubble: View {
             // Sent attachments: the composer's tray, scaled up and read-only,
             // as a full-width row that scrolls with the same trailing fade.
             if !message.attachments.isEmpty {
-                AttachmentTray(attachments: message.attachments, tileSize: 112, corner: AppRadius.medium)
+                AttachmentTray(attachments: message.attachments, tileSize: 112, corner: AppRadius.medium, staggerOnAppear: true)
+                    // Cancel the message row's trailing inset so the row runs to the
+                    // device edge and an overflowing tile crops at the screen frame.
+                    .padding(.trailing, -AppSpacing.lg)
             }
             // No empty bubble on an attachments-only message.
             if !message.content.isEmpty {

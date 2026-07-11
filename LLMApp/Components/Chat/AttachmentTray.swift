@@ -8,46 +8,44 @@ struct AttachmentTray: View {
     var attachments: [Attachment]
     var tileSize: CGFloat = 56
     var corner: CGFloat = AppRadius.small
+    /// Gap between tiles. Defaults to the chat's 12pt; the composer passes 8pt
+    /// so the gap reads proportional next to its smaller (56pt vs 112pt) tiles.
+    var tileSpacing: CGFloat = AppSpacing.sm
     /// nil → read-only (no per-tile remove button), as in a sent message.
     var onRemove: ((Attachment) -> Void)? = nil
+    /// When true, tiles fade + rise in one after another on first appear — the
+    /// subtle load-in used in a sent message. Off in the composer, where tiles
+    /// already land individually as each photo finishes decoding.
+    var staggerOnAppear: Bool = false
 
-    /// Ids whose fly-up copy is currently airborne — hide the real tile so only
-    /// the flying copy shows, then reveal it when the copy lands.
-    @Environment(\.hiddenAttachmentIDs) private var hiddenIDs
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var appeared = false
 
-    /// Width of the trailing dissolve so overflowing tiles fade out instead of
-    /// hard-clipping at the edge (same technique as ProfileSheet's top fade).
-    private let trailingFade: CGFloat = 16
+    private var staggers: Bool { staggerOnAppear && !reduceMotion }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: AppSpacing.sm) {
-                ForEach(attachments) { attachment in
+            HStack(spacing: tileSpacing) {
+                ForEach(Array(attachments.enumerated()), id: \.element.id) { index, attachment in
+                    let shown = !staggers || appeared
                     AttachmentTileView(attachment: attachment, tileSize: tileSize, corner: corner)
                         .overlay(alignment: .topTrailing) { removeButton(attachment) }
-                        // Publish this tile's screen frame for the send fly-up.
-                        .background {
-                            GeometryReader { proxy in
-                                Color.clear.preference(
-                                    key: AttachmentFramesKey.self,
-                                    value: [attachment.id: proxy.frame(in: .global)]
-                                )
-                            }
-                        }
-                        .opacity(hiddenIDs.contains(attachment.id) ? 0 : 1)
+                        .opacity(shown ? 1 : 0)
+                        .scaleEffect(shown ? 1 : 0.97, anchor: .bottom)
+                        .offset(y: shown ? 0 : 8)
+                        // Each tile trails the last by a beat — quick, gentle spring
+                        // (short response, fully damped so it settles without bounce)
+                        // and a small move, so it reads as elegant, not a cascade.
+                        .animation(staggers ? .spring(response: 0.3, dampingFraction: 0.9)
+                            .delay(Double(index) * 0.06) : nil, value: appeared)
                 }
             }
             .padding(.vertical, 2)
         }
-        // Solid to the left, dissolving to clear over the last `trailingFade`
-        // points so an overflowing tile softly fades rather than cutting off.
-        .mask {
-            HStack(spacing: 0) {
-                Rectangle().fill(.black)
-                LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
-                    .frame(width: trailingFade)
-            }
-        }
+        // Overflowing tiles hard-crop at the scroll view's edge — the input field's
+        // rounded edge in the composer, the device frame in a sent message (which
+        // extends the row to the screen edge). No trailing fade.
+        .onAppear { appeared = true }
     }
 
     /// Corner remove button — white glyph on a dark scrim so it reads on both a
@@ -63,28 +61,6 @@ struct AttachmentTray: View {
             .accessibilityLabel("Remove \(attachment.name)")
             .padding(4)
         }
-    }
-}
-
-/// Screen frames of every on-screen attachment tile, keyed by attachment id, so
-/// the send fly-up can read the composer's start frame and the message's end frame.
-struct AttachmentFramesKey: PreferenceKey {
-    static let defaultValue: [UUID: CGRect] = [:]
-    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
-        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
-    }
-}
-
-/// Attachment ids to hide (their fly-up copy is airborne), passed down so both
-/// the composer's tray and the sent message's tray hide the matching real tile.
-struct HiddenAttachmentIDsKey: EnvironmentKey {
-    static let defaultValue: Set<UUID> = []
-}
-
-extension EnvironmentValues {
-    var hiddenAttachmentIDs: Set<UUID> {
-        get { self[HiddenAttachmentIDsKey.self] }
-        set { self[HiddenAttachmentIDsKey.self] = newValue }
     }
 }
 

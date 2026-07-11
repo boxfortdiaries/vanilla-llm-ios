@@ -203,6 +203,9 @@ private struct ChatCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isRenaming = false
     @State private var renameText = ""
+    /// Bottom edge of the floating header (global), so the conversation can inset
+    /// its content — and pin — to rest just below it.
+    @State private var headerBottom: CGFloat = 0
 
     var body: some View {
         @Bindable var coordinator = container.navigationCoordinator
@@ -210,7 +213,20 @@ private struct ChatCard: View {
         let isEmpty = container.conversationStore.conversation(id: currentID)?.messages.isEmpty ?? true
 
         AppBackground {
-            VStack(spacing: 0) {
+            NavigationStack(path: Bindable(container.router).path) {
+                ConversationView(
+                    conversationID: currentID,
+                    store: container.conversationStore,
+                    aiService: container.aiService,
+                    headerHeight: headerBottom,
+                    onComposerFrame: onComposerFrame
+                )
+                .id(currentID)
+            }
+            // Float the bar over the conversation (safe-area inset, not a VStack)
+            // so messages scroll up *behind* it and dissolve under it — no hard
+            // header cut. Content still rests below it at anchor.
+            .safeAreaInset(edge: .top, spacing: 0) {
                 GlassNavigationBar(
                     // No title — the drawer already names each conversation.
                     title: nil,
@@ -221,20 +237,17 @@ private struct ChatCard: View {
                     },
                     trailingActions: trailingActions(currentID: currentID, isEmpty: isEmpty)
                 )
+                .background {
+                    GeometryReader { g in
+                        Color.clear.onChange(of: g.frame(in: .global).maxY, initial: true) { _, y in
+                            headerBottom = y
+                        }
+                    }
+                }
                 // Morph the trailing pill when the New Chat action appears/leaves
                 // (empty ⇄ non-empty) rather than snapping — the whole point of
                 // keeping the bar persistent.
                 .animation(.spring(duration: 0.4), value: isEmpty)
-
-                NavigationStack(path: Bindable(container.router).path) {
-                    ConversationView(
-                        conversationID: currentID,
-                        store: container.conversationStore,
-                        aiService: container.aiService,
-                        onComposerFrame: onComposerFrame
-                    )
-                    .id(currentID)
-                }
             }
         }
         .environment(container.appState)

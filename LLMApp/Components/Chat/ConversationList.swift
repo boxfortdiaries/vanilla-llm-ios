@@ -17,12 +17,25 @@ struct ConversationList: View {
     /// Increment to force a scroll-to-bottom regardless of `isAtBottom` — the
     /// "return to latest" button (spec §18.7) uses this.
     var scrollToBottomTrigger: Int = 0
+    /// Header height. The list extends up behind the floating nav bar (so content
+    /// dissolves under it) but its content — and the pinned message — rest below
+    /// it, via this top content inset.
+    var topInset: CGFloat = 0
+    /// Footer (composer) height — the list extends down behind the composer so
+    /// content dissolves under it, but rests above it via this bottom inset.
+    var bottomInset: CGFloat = 0
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var viewportHeight: CGFloat = 0
 
-    private let messageInsertion: AnyTransition = .opacity
+    // Cohesive rise: a new message (text + attachments as one unit) lifts and
+    // scales into its pinned spot, rather than popping or splitting apart.
+    private var messageInsertion: AnyTransition {
+        reduceMotion
+            ? .opacity
+            : .offset(y: 52).combined(with: .scale(scale: 0.94, anchor: .center)).combined(with: .opacity)
+    }
 
     private var lastUserID: UUID? { messages.last(where: { $0.role == .user })?.id }
 
@@ -47,6 +60,12 @@ struct ConversationList: View {
                     Color.clear.frame(height: viewportHeight)
                 }
             }
+            // Extend behind the floating header and composer (so content dissolves
+            // under both) but inset the content — and the pin target — so it rests
+            // between them, not behind them.
+            .ignoresSafeArea(.container, edges: [.top, .bottom])
+            .contentMargins(.top, topInset, for: .scrollContent)
+            .contentMargins(.bottom, bottomInset, for: .scrollContent)
             .background {
                 GeometryReader { g in
                     Color.clear.onChange(of: g.size.height, initial: true) { _, h in viewportHeight = h }
@@ -63,8 +82,8 @@ struct ConversationList: View {
             } action: { _, atBottom in
                 isAtBottom = atBottom
             }
-            // Open with the latest turn pinned to the top.
-            .onAppear { pinLatestTurn(proxy: proxy) }
+            // Open with the latest turn pinned to the top (no animation on open).
+            .onAppear { pinLatestTurn(proxy: proxy, animated: false) }
             // A just-sent user message pins to the top (pushing earlier turns up).
             // Assistant messages don't scroll on their own — the reserve holds the
             // user message in place while the reply fills the gap below it.
@@ -81,16 +100,23 @@ struct ConversationList: View {
         }
     }
 
-    /// Pin the latest user message to the top — instantly, so its final frame is
-    /// settled before the attachment fly-up reads it (an animated scroll leaves
-    /// the message mid-travel and the copies land on the wrong spot). Deferred one
-    /// hop so the reserved space is laid out first — otherwise there's nothing
-    /// below to scroll into.
-    private func pinLatestTurn(proxy: ScrollViewProxy) {
+    /// Pin the latest user message to the top, animating the scroll so earlier
+    /// turns visibly slide up and off the top ("get out of the way") as the new
+    /// message rises in — on the same spring as the message's rise so they move
+    /// together. The reply is held until this settles (see handleSend) so it
+    /// can't fight the scroll mid-flight, which is what made it jitter before.
+    /// Deferred one hop so the reserved space is laid out first.
+    private func pinLatestTurn(proxy: ScrollViewProxy, animated: Bool = true) {
         guard let id = lastUserID else { return }
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(50))
-            proxy.scrollTo(id, anchor: .top)
+            if animated {
+                withAnimation(AppAnimation.resolve(.spring(response: 0.42, dampingFraction: 0.82), reduceMotion: reduceMotion)) {
+                    proxy.scrollTo(id, anchor: .top)
+                }
+            } else {
+                proxy.scrollTo(id, anchor: .top)
+            }
         }
     }
 }
