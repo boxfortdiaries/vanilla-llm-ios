@@ -17,35 +17,77 @@ struct AttachmentTray: View {
     /// subtle load-in used in a sent message. Off in the composer, where tiles
     /// already land individually as each photo finishes decoding.
     var staggerOnAppear: Bool = false
+    /// Which edge a row that FITS within the available width hugs. A sent
+    /// message wants `.trailing` — one or two images shouldn't sit flush left
+    /// under a right-aligned bubble. The composer keeps the default
+    /// `.leading`. An overflowing row always scrolls, starting at the leading
+    /// tile, regardless of this setting.
+    var alignment: HorizontalAlignment = .leading
+    /// Extra width an OVERFLOWING row may claim beyond the normally-proposed
+    /// width, so its tiles crop at the true device edge instead of stopping
+    /// at the surrounding content margin (e.g. ConversationList's 24pt inset).
+    /// Has no effect on a row that fits — that one rests at the normal
+    /// margin, not the edge. 0 is correct for the composer, which has no
+    /// such margin to claim.
+    var edgeCropInset: CGFloat = 0
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
 
     private var staggers: Bool { staggerOnAppear && !reduceMotion }
 
+    /// Computed from known tile geometry rather than measured — avoids an
+    /// extra layout pass (and the one-frame flash of wrong alignment that
+    /// would come with it) just to learn whether the row overflows.
+    private var naturalContentWidth: CGFloat {
+        guard !attachments.isEmpty else { return 0 }
+        let tileWidths = attachments.map { $0.type == .image ? tileSize : AttachmentTileView.cardMaxWidth(for: tileSize) }
+        return tileWidths.reduce(0, +) + CGFloat(attachments.count - 1) * tileSpacing
+    }
+
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: tileSpacing) {
-                ForEach(Array(attachments.enumerated()), id: \.element.id) { index, attachment in
-                    let shown = !staggers || appeared
-                    AttachmentTileView(attachment: attachment, tileSize: tileSize, corner: corner)
-                        .overlay(alignment: .topTrailing) { removeButton(attachment) }
-                        .opacity(shown ? 1 : 0)
-                        .scaleEffect(shown ? 1 : 0.97, anchor: .bottom)
-                        .offset(y: shown ? 0 : 8)
-                        // Each tile trails the last by a beat — quick, gentle spring
-                        // (short response, fully damped so it settles without bounce)
-                        // and a small move, so it reads as elegant, not a cascade.
-                        .animation(staggers ? .spring(response: 0.3, dampingFraction: 0.9)
-                            .delay(Double(index) * 0.06) : nil, value: appeared)
+        GeometryReader { geometry in
+            if naturalContentWidth > geometry.size.width {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    tileRow.padding(.vertical, 2)
                 }
+                // Only an overflowing row claims the extra edge margin — see
+                // `edgeCropInset`.
+                .padding(.trailing, -edgeCropInset)
+            } else {
+                // Fits: no scrolling needed, just rest at `alignment` within
+                // the normally-proposed (un-claimed) width.
+                tileRow
+                    .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
+                    .padding(.vertical, 2)
             }
-            .padding(.vertical, 2)
         }
+        // GeometryReader fills all offered space by default — pin the height
+        // to exactly what the content needs (tile + the vertical padding
+        // above), matching what the ScrollView sized itself to before.
+        .frame(height: tileSize + 4)
         // Overflowing tiles hard-crop at the scroll view's edge — the input field's
         // rounded edge in the composer, the device frame in a sent message (which
         // extends the row to the screen edge). No trailing fade.
         .onAppear { appeared = true }
+    }
+
+    private var tileRow: some View {
+        HStack(spacing: tileSpacing) {
+            ForEach(Array(attachments.enumerated()), id: \.element.id) { index, attachment in
+                let shown = !staggers || appeared
+                AttachmentTileView(attachment: attachment, tileSize: tileSize, corner: corner)
+                    .overlay(alignment: .topTrailing) { removeButton(attachment) }
+                    .opacity(shown ? 1 : 0)
+                    .scaleEffect(shown ? 1 : 0.97, anchor: .bottom)
+                    .offset(y: shown ? 0 : 8)
+                    // Each tile trails the last by a beat — quick, gentle spring
+                    // (short response, fully damped so it settles without bounce)
+                    // and a small move, so it reads as elegant, not a cascade.
+                    .animation(staggers ? .spring(response: 0.3, dampingFraction: 0.9)
+                        .delay(Double(index) * 0.06) : nil, value: appeared)
+            }
+        }
     }
 
     /// Corner remove button — white glyph on a dark scrim so it reads on both a

@@ -70,15 +70,16 @@ struct ConversationView: View {
                 }
 
                 if !isAtBottom {
-                    BottomAccessory {
-                        Button {
-                            scrollToBottomTrigger += 1
-                        } label: {
-                            Label("New messages", systemImage: "arrow.down")
-                                .font(AppFont.footnote)
-                        }
-                        .tint(AppColor.Tint.cta)
+                    Button {
+                        scrollToBottomTrigger += 1
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(AppColor.Tint.cta)
+                            .frame(width: 36, height: 36)
                     }
+                    .glassEffect(.regular.interactive(), in: .circle)
+                    .accessibilityLabel("New messages")
                     .padding(.bottom, AppSpacing.sm)
                     .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8)))
                 }
@@ -119,7 +120,7 @@ struct ConversationView: View {
         // can't start mid-scroll and jerk the message. A first message has no
         // push-up, so it needs less.
         let settle: Duration = .milliseconds(viewModel.messages.isEmpty ? 340 : 620)
-        withAnimation(AppAnimation.resolve(.spring(response: 0.42, dampingFraction: 0.82), reduceMotion: reduceMotion)) {
+        withAnimation(AppAnimation.resolve(.spring(response: 0.42, dampingFraction: 0.94), reduceMotion: reduceMotion)) {
             _ = viewModel.send()
         }
         Task { @MainActor in

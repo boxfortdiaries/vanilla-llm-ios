@@ -12,10 +12,14 @@ struct UserBubble: View {
             // Sent attachments: the composer's tray, scaled up and read-only,
             // as a full-width row that scrolls with the same trailing fade.
             if !message.attachments.isEmpty {
-                AttachmentTray(attachments: message.attachments, tileSize: 112, corner: AppRadius.medium, staggerOnAppear: true)
-                    // Cancel the message row's trailing inset so the row runs to the
-                    // device edge and an overflowing tile crops at the screen frame.
-                    .padding(.trailing, -AppSpacing.lg)
+                // edgeCropInset: an OVERFLOWING row claims this much extra width
+                // (beyond the normal content margin) so its tiles crop at the
+                // device edge; a row that fits ignores it and rests at the
+                // normal margin, same as the text bubble below.
+                AttachmentTray(
+                    attachments: message.attachments, tileSize: 112, corner: AppRadius.medium,
+                    staggerOnAppear: true, alignment: .trailing, edgeCropInset: AppSpacing.lg
+                )
             }
             // No empty bubble on an attachments-only message.
             if !message.content.isEmpty {

@@ -111,7 +111,7 @@ struct ConversationList: View {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(50))
             if animated {
-                withAnimation(AppAnimation.resolve(.spring(response: 0.42, dampingFraction: 0.82), reduceMotion: reduceMotion)) {
+                withAnimation(AppAnimation.resolve(.spring(response: 0.42, dampingFraction: 0.94), reduceMotion: reduceMotion)) {
                     proxy.scrollTo(id, anchor: .top)
                 }
             } else {

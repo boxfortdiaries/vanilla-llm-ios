@@ -11,8 +11,13 @@ struct AttachmentTileView: View {
     var corner: CGFloat = AppRadius.medium
 
     private var iconSize: CGFloat { tileSize * 0.643 }
-    private var cardMaxWidth: CGFloat { min(tileSize * 3.93, 300) }
+    private var cardMaxWidth: CGFloat { Self.cardMaxWidth(for: tileSize) }
     private var isLarge: Bool { tileSize >= 88 }
+
+    /// A file card's width at a given tile size — exposed so `AttachmentTray`
+    /// can compute a row's total content width up front (to decide fit vs.
+    /// overflow) without an extra measurement pass.
+    static func cardMaxWidth(for tileSize: CGFloat) -> CGFloat { min(tileSize * 3.93, 300) }
 
     var body: some View {
         if attachment.type == .image, let image = thumbnail {
