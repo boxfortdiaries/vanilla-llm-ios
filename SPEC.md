@@ -13,7 +13,7 @@ This document was rebuilt from the inside out: every `spec §X.Y` comment across
 has no surviving citation anywhere in the code, it is listed as a gap rather than invented — there is no
 way to know what it said, and guessing would make this document less trustworthy than having a hole in it.
 
-**Going forward:** this file (plus `DESIGN.md` and `CONVERSATION_ENGINE.md`) should be written *during*
+**Going forward:** this file (plus `DESIGN.md` and `CONVERSATION-ARCHITECTURE.md`) should be written *during*
 project setup, before the first line of implementation code — not reconstructed after the fact. Comments
 can keep citing sections like `spec §6.1`, but only because the section actually exists here to check
 against.
@@ -22,10 +22,12 @@ against.
 
 - **`DESIGN.md`** — the actual values for every design token this document's §6 only describes the
   *existence* of (colors, type, spacing, radius, motion durations). Don't duplicate values here.
-- **`CONVERSATION_ENGINE.md`** — the authoritative, more detailed spec for conversation-specific behavior
-  (scroll ownership, streaming, keyboard coordination). It supersedes this document wherever the two
-  overlap (§13.2, §18.7, §18.8, §18.11, §19.3, §20.4) — written later, with direct implementation
-  cross-checks, so it's more trustworthy on those topics than this reconstruction.
+- **`CONVERSATION-ARCHITECTURE.md`** — the authoritative, canonical spec for conversation behavior (viewport,
+  motion, scroll ownership, keyboard coordination, composer, lifecycle, streaming, history navigation,
+  accessibility, performance, extension rules). Supersedes this document wherever the two overlap (§13.2,
+  §18.7, §18.8, §18.11, §19.3, §20.4) — drafted 2026-07-12 as a from-scratch behavioral architecture, not a
+  reconstruction, so it's the trustworthy source on those topics, not this document. Replaces the earlier
+  `CONVERSATION_ENGINE.md` (deleted).
 
 ---
 
@@ -141,8 +143,9 @@ container), `GlassNavigationBar` (custom floating top bar, replacing system nav 
 (primary contextual action, e.g. "New Chat").
 
 ### §13.2 — Conversation & Message Rendering
-**See `CONVERSATION_ENGINE.md` — that document is authoritative here and has already reconciled two places
-where this reconstruction's evidence doesn't match shipped behavior (streaming reveal, scroll reserve).**
+**See `CONVERSATION-ARCHITECTURE.md` — that document is authoritative here.** Its Streaming System (§9) and
+Viewport/Boundary Physics sections (§2) define the target behavior; the current implementation (streaming
+reveal, scroll-boundary recovery) predates that document and has known gaps against it, not yet reconciled.
 
 Evidenced rules not superseded: assistant messages render readable-first — full-width text/markdown, no
 bubble background/container. User messages get a bubble (system-gray fill, not blue — revised from an
@@ -184,15 +187,16 @@ per button. → exact values in `DESIGN.md`.
 Native `contextMenu` only — no custom-built menu surfaces.
 
 ### §18.7 — Return To Latest
-See `CONVERSATION_ENGINE.md` §6 for full behavior.
+See `CONVERSATION-ARCHITECTURE.md` §4.8–§4.10 (Scroll Ownership: Return To Live Conversation) and §10.8–§10.10
+(History Navigation: Returning to Live) for full behavior.
 
 ### §18.8 — Keyboard Avoidance
 "Never fight the keyboard" — achieved via native `safeAreaInset`, not custom keyboard-tracking. See
-`CONVERSATION_ENGINE.md` §7.
+`CONVERSATION-ARCHITECTURE.md` §6 (Keyboard Coordination System).
 
 ### §18.11 — Streaming Cursor
-500ms blink interval, opacity transition, fades on completion. See `CONVERSATION_ENGINE.md` §5 for how this
-interacts with the (deliberately non-literal) streaming reveal.
+500ms blink interval, opacity transition, fades on completion. See `CONVERSATION-ARCHITECTURE.md` §9
+(Streaming System) for how this interacts with the (deliberately non-literal) streaming reveal.
 
 ### §18.12 — Sheet Header Pattern
 Standard sheet header shape: header, content, primary action.
@@ -216,8 +220,9 @@ Real backing store should be SwiftData. Current prototype uses an injected in-me
 (`ConversationStore`) seeded from `SampleData`.
 
 ### §19.3 — Screen-Level Generation State
-See `CONVERSATION_ENGINE.md` §4/§9 (state machines). Per-message status (draft/streaming/failed/etc.) lives
-on `Message` itself; a separate, smaller enum covers only screen-level idle/generating.
+See `CONVERSATION-ARCHITECTURE.md` §8 (Conversation Lifecycle System) and §9 (Streaming System) for the
+canonical state model. Per-message status (draft/streaming/failed/etc.) lives on `Message` itself; a
+separate, smaller enum covers only screen-level idle/generating.
 
 ### §19.4 — State Ownership Boundaries
 `AppState` owns only what outlives a single screen — global preferences, appearance, routing. Screen-local
