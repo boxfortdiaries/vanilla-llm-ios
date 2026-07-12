@@ -10,7 +10,7 @@ enum AppAnimation {
 
     static let pressScale: CGFloat = 0.97
     static let contextMenuDelay: Double = 0.5
-    static let cursorBlinkInterval: Double = 0.5
+    static let thinkingShimmerDuration: Double = 1.4
 
     static let fast = Animation.spring(response: fastDuration, dampingFraction: 0.9)
     static let standard = Animation.spring(response: standardDuration, dampingFraction: 0.86)

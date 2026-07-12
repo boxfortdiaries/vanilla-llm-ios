@@ -194,9 +194,12 @@ See `CONVERSATION-ARCHITECTURE.md` §4.8–§4.10 (Scroll Ownership: Return To L
 "Never fight the keyboard" — achieved via native `safeAreaInset`, not custom keyboard-tracking. See
 `CONVERSATION-ARCHITECTURE.md` §6 (Keyboard Coordination System).
 
-### §18.11 — Streaming Cursor
-500ms blink interval, opacity transition, fades on completion. See `CONVERSATION-ARCHITECTURE.md` §9
-(Streaming System) for how this interacts with the (deliberately non-literal) streaming reveal.
+### §18.11 — Thinking Indicator
+While a reply is hidden mid-generation, a shimmering "Thinking" label communicates activity (replaced an
+earlier blinking cursor, per Dan 2026-07) — dim base text with a lighter highlight looping across it, masked
+to the letterforms. Eases out via opacity once the reply is ready to reveal, rather than cutting instantly.
+See `CONVERSATION-ARCHITECTURE.md` §9 (Streaming System) for how this interacts with the (deliberately
+non-literal) streaming reveal.
 
 ### §18.12 — Sheet Header Pattern
 Standard sheet header shape: header, content, primary action.

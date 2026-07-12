@@ -8,6 +8,8 @@ struct StreamingMessage: View {
     var partialText: String
     var status: MessageStatus
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     /// True once this message has been observed in `.streaming` — the
     /// cascade reveal (see MarkdownView) only plays for a reply that just
     /// finished generating in this session, not one loaded already-complete
@@ -17,27 +19,26 @@ struct StreamingMessage: View {
     /// already streaming (the common case) on the very first render.
     @State private var didStream = false
 
-    /// While generating, the reply stays hidden behind the cursor — no
-    /// visible word-by-word growth — then the complete answer cascades into
-    /// view top-to-bottom (per Dan 2026-07: a flat whole-block fade still
-    /// read as a typewriter; a top-to-bottom sweep reads as magic).
+    /// While generating, the reply stays hidden behind the "Thinking" shimmer
+    /// — no visible word-by-word growth — then the complete answer cascades
+    /// into view top-to-bottom (per Dan 2026-07: a flat whole-block fade
+    /// still read as a typewriter; a top-to-bottom sweep reads as magic).
     private var isThinking: Bool { status == .streaming }
-    private var isCursorVisible: Bool {
-        status != .complete && status != .failed
-    }
 
     var body: some View {
-        HStack(alignment: .top, spacing: AppSpacing.xxs) {
+        Group {
             if isThinking {
-                StreamingCursor()
+                ThinkingText()
+                    .transition(.opacity)
             } else {
                 MarkdownView(content: partialText, animateReveal: didStream)
-                if isCursorVisible {
-                    StreamingCursor()
-                }
+                    .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Eases the shimmer out rather than cutting it the instant the
+        // reply arrives (per Dan 2026-07).
+        .animation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion), value: isThinking)
         .onChange(of: status, initial: true) { _, new in
             if new == .streaming { didStream = true }
         }
