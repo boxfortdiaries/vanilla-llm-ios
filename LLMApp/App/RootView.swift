@@ -181,6 +181,7 @@ struct RootView: View {
                     drawerDragActive = false
                     let projected = base + value.predictedEndTranslation.width
                     let shouldOpen = projected > drawerWidth / 2
+                    if shouldOpen { UIApplication.shared.dismissKeyboard() }
                     withAnimation(anim) {
                         dragTranslation = 0
                         coordinator.isSidebarOpen = shouldOpen
@@ -231,6 +232,7 @@ private struct ChatCard: View {
                     // No title — the drawer already names each conversation.
                     title: nil,
                     leadingAction: .init(icon: "line.3.horizontal", label: "Menu") {
+                        UIApplication.shared.dismissKeyboard()
                         withAnimation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion)) {
                             coordinator.toggleSidebar()
                         }

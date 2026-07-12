@@ -34,7 +34,20 @@ struct AttachmentTray: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
 
-    private var staggers: Bool { staggerOnAppear && !reduceMotion }
+    /// Attachment ids whose tray has already played its stagger entrance once
+    /// this session. Switching conversations rebuilds this view from scratch
+    /// (fresh `@State`), but a message that already loaded shouldn't replay
+    /// the animation as if it just arrived — only a genuinely first-ever
+    /// appearance should. Type-level (not instance) storage so it survives
+    /// that rebuild; session-scoped only (resets on relaunch), which is fine
+    /// — nothing has "appeared" yet in a fresh session either.
+    @MainActor private static var seenAttachmentIDs: Set<UUID> = []
+    private var alreadySeen: Bool {
+        guard let firstID = attachments.first?.id else { return true }
+        return Self.seenAttachmentIDs.contains(firstID)
+    }
+
+    private var staggers: Bool { staggerOnAppear && !reduceMotion && !alreadySeen }
 
     /// Computed from known tile geometry rather than measured — avoids an
     /// extra layout pass (and the one-frame flash of wrong alignment that
@@ -69,7 +82,10 @@ struct AttachmentTray: View {
         // Overflowing tiles hard-crop at the scroll view's edge — the input field's
         // rounded edge in the composer, the device frame in a sent message (which
         // extends the row to the screen edge). No trailing fade.
-        .onAppear { appeared = true }
+        .onAppear {
+            appeared = true
+            for attachment in attachments { Self.seenAttachmentIDs.insert(attachment.id) }
+        }
     }
 
     private var tileRow: some View {

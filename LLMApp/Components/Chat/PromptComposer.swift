@@ -20,6 +20,7 @@ struct PromptComposer: View {
     var onStop: () -> Void
     var onAddAttachment: (Attachment) -> Void
     var onRemoveAttachment: (Attachment) -> Void
+    var onMicTap: () -> Void = {}
 
     @FocusState private var isFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -63,7 +64,12 @@ struct PromptComposer: View {
                     messageField
                 }
 
-                SendButton(isGenerating: isGenerating, canSend: canSend, onSend: onSend, onStop: onStop)
+                SendButton(
+                    isGenerating: isGenerating, canSend: canSend,
+                    onSend: { isFocused = false; onSend() },
+                    onStop: onStop,
+                    onMicTap: { isFocused = false; onMicTap() }
+                )
             }
         }
         .padding(.horizontal, AppSpacing.lg)

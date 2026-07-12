@@ -15,6 +15,8 @@ settings:
     INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
     INFOPLIST_KEY_CFBundleDisplayName: "LLM-iOS"
     INFOPLIST_KEY_NSCameraUsageDescription: "LLM-iOS uses the camera to take photos to attach to your messages."
+    INFOPLIST_KEY_NSMicrophoneUsageDescription: "LLM-iOS uses the microphone for live voice conversations with the assistant."
+    INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "LLM-iOS uses speech recognition to turn what you say into text during a voice conversation."
     # Expose the app's Documents folder in the Files app (On My iPhone → LLM-iOS)
     # so the DEBUG sample files are reachable from the file picker.
     INFOPLIST_KEY_UIFileSharingEnabled: YES
@@ -22,6 +24,10 @@ settings:
     MARKETING_VERSION: "0.1"
     CURRENT_PROJECT_VERSION: "1"
     CODE_SIGN_STYLE: Automatic
+    # Without this, xcodegen regenerating the project (which happens on every
+    # `xcodegen generate`) wipes out a Team picked manually in Xcode's UI —
+    # that selection only lives in the generated .xcodeproj, never here.
+    DEVELOPMENT_TEAM: HM53U2L7X8
     IPHONEOS_DEPLOYMENT_TARGET: "26.0"
 targets:
   LLM-iOS:

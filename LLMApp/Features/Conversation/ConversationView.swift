@@ -10,9 +10,16 @@ struct ConversationView: View {
     /// Owned here (not in PromptComposer) so the starter prompts can drop away
     /// when the attachment tray opens, same as when the user starts typing.
     @State private var isAttachmentExpanded = false
+    @State private var voiceRoute: VoiceRoute?
+    @AppStorage("selectedVoiceIdentifier") private var storedVoiceIdentifier = ""
     /// Bottom edge of the floating header (from ChatCard), so the list rests its
     /// content below it and the top fade lines up with it.
     var headerHeight: CGFloat = 0
+    /// The composer's own height, measured below, so the list can rest its
+    /// content above it by the same gap the header gets — without this the
+    /// resting scroll position sits flush behind the composer's fade, hidden
+    /// by it rather than resting above it.
+    @State private var composerHeight: CGFloat = 0
 
     /// Reports the composer's on-screen frame to the drawer gesture so a drag
     /// starting on it (e.g. scrolling the attachment tray) doesn't open the drawer.
@@ -55,7 +62,10 @@ struct ConversationView: View {
                         isAtBottom: $isAtBottom,
                         scrollToBottomTrigger: scrollToBottomTrigger,
                         topInset: headerHeight + AppSpacing.lg,
-                        bottomInset: 0
+                        // xl (not lg, like the header): pulled up a bit further
+                        // per Dan 2026-07 — the header's own gap read as too
+                        // tight once mirrored at the bottom.
+                        bottomInset: composerHeight + AppSpacing.xl
                     )
                     // Dissolve the conversation into the background at the top
                     // (under the header) and bottom (above the composer) instead
@@ -98,7 +108,8 @@ struct ConversationView: View {
                 onAddAttachment: { viewModel.attachments.append($0) },
                 onRemoveAttachment: { attachment in
                     viewModel.attachments.removeAll { $0.id == attachment.id }
-                }
+                },
+                onMicTap: handleMicTap
             )
             // Report the composer's screen frame up so the drawer's open-drag can
             // skip drags that start here (letting the attachment tray scroll).
@@ -106,9 +117,41 @@ struct ConversationView: View {
                 GeometryReader { proxy in
                     Color.clear.onChange(of: proxy.frame(in: .global), initial: true) { _, frame in
                         onComposerFrame(frame)
+                        composerHeight = frame.height
                     }
                 }
             }
+        }
+        .fullScreenCover(item: $voiceRoute) { route in
+            switch route {
+            case .picker:
+                VoicePickerView(
+                    voices: VoiceOption.availableVoices(),
+                    onStart: { voice in
+                        storedVoiceIdentifier = voice.voiceIdentifier
+                        voiceRoute = .live(voice)
+                    },
+                    onCancel: { voiceRoute = nil }
+                )
+            case .live(let voiceOption):
+                LiveVoiceConversationView(
+                    conversationViewModel: viewModel,
+                    selectedVoice: voiceOption,
+                    onChangeVoice: { voiceRoute = .picker },
+                    onClose: { voiceRoute = nil }
+                )
+            }
+        }
+    }
+
+    /// Mic tap on the composer's default-state CTA: jump straight into live
+    /// voice with the remembered voice, or the picker on first use.
+    private func handleMicTap() {
+        let voices = VoiceOption.availableVoices()
+        if let remembered = voices.first(where: { $0.voiceIdentifier == storedVoiceIdentifier }) {
+            voiceRoute = .live(remembered)
+        } else {
+            voiceRoute = .picker
         }
     }
 
@@ -196,6 +239,19 @@ struct ConversationView: View {
         // Gentle, slightly slower fade for the starter prompts (easeInOut reads
         // softer than the spring token for a pure opacity change).
         .animation(AppAnimation.resolve(.easeInOut(duration: 0.35), reduceMotion: reduceMotion), value: showSuggestions)
+    }
+}
+
+/// Which full-screen voice surface is presented, if any.
+private enum VoiceRoute: Identifiable {
+    case picker
+    case live(VoiceOption)
+
+    var id: String {
+        switch self {
+        case .picker: "picker"
+        case .live(let voice): "live-\(voice.id)"
+        }
     }
 }
 
