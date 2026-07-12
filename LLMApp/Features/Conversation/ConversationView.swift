@@ -61,7 +61,11 @@ struct ConversationView: View {
                         messages: viewModel.messages,
                         isAtBottom: $isAtBottom,
                         scrollToBottomTrigger: scrollToBottomTrigger,
-                        topInset: headerHeight + AppSpacing.lg,
+                        // headerHeight minus md: per Dan 2026-07, the pinned
+                        // message sat too low under the header — first xs
+                        // (16pt up), then this (another 24pt up), landing on
+                        // headerHeight - md overall.
+                        topInset: headerHeight - AppSpacing.md,
                         // xl (not lg, like the header): pulled up a bit further
                         // per Dan 2026-07 — the header's own gap read as too
                         // tight once mirrored at the bottom.
@@ -163,7 +167,9 @@ struct ConversationView: View {
         // can't start mid-scroll and jerk the message. A first message has no
         // push-up, so it needs less.
         let settle: Duration = .milliseconds(viewModel.messages.isEmpty ? 340 : 620)
-        withAnimation(AppAnimation.resolve(.spring(response: 0.42, dampingFraction: 0.94), reduceMotion: reduceMotion)) {
+        // Kept in sync with ConversationList's pin-scroll spring (0.42/0.97) —
+        // see its comment for why 0.97, not the earlier 0.94.
+        withAnimation(AppAnimation.resolve(.spring(response: 0.42, dampingFraction: 0.97), reduceMotion: reduceMotion)) {
             _ = viewModel.send()
         }
         Task { @MainActor in
@@ -209,7 +215,15 @@ struct ConversationView: View {
                 VStack(alignment: .leading, spacing: AppSpacing.xxs) {
                     ForEach(suggestions, id: \.text) { suggestion in
                         Button {
-                            viewModel.composerText = suggestion.text
+                            // Same animation as the list's own fade-out below —
+                            // otherwise the composer's height change (from
+                            // wrapping to a second line) snaps instantly while
+                            // the fade eases over 0.35s, and the two racing on
+                            // different clocks is what read as the rows
+                            // repositioning inconsistently (per Dan 2026-07).
+                            withAnimation(AppAnimation.resolve(.easeInOut(duration: 0.35), reduceMotion: reduceMotion)) {
+                                viewModel.composerText = suggestion.text
+                            }
                         } label: {
                             HStack(spacing: AppSpacing.md) {
                                 Image(systemName: suggestion.icon)
