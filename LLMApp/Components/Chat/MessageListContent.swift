@@ -5,12 +5,24 @@ import SwiftUI
 /// instead of a SwiftUI `ScrollView`. Renders exactly the same content as
 /// before; only the thing that owns scroll offset moved to UIKit.
 ///
-/// Reports geometry it measures (the pinned row's height, the first row's
-/// position) back up via closures rather than `@State` — this view doesn't
-/// own scroll state, `MessageScrollViewController` does. The pinned row's
-/// own *position* is deliberately NOT measured here via `GeometryReader`
-/// (an earlier version was) — see `MessageScrollViewController
-/// .canonicalTargetY` for why that was unreliable and what replaced it.
+/// Reports geometry it measures (the pinned row's height and position, the
+/// first row's position) back up via closures rather than `@State` — this
+/// view doesn't own scroll state, `MessageScrollViewController` does.
+///
+/// The pinned row's position (`onPinnedMinYChange`) was briefly replaced
+/// (2026-07-13) with a `contentSize`-derived formula in
+/// `MessageScrollViewController.canonicalTargetY`, on the theory that a
+/// freshly-inserted row's `GeometryReader` position could read stale. That
+/// turned out to be the wrong fix for the wrong problem: `contentSize`
+/// includes the assistant's reply, which keeps growing for as long as it's
+/// still streaming in *below* the pinned row — so a `contentSize`-based
+/// target drifts continuously for that entire duration, no matter how long
+/// you wait for it to "settle" (it never does, until streaming finishes).
+/// The pinned row's own position is structurally immune to that — it only
+/// depends on content *above* it, which is already stable — so measuring it
+/// directly is correct; the caller just needs a jitter tolerance instead of
+/// exact equality (see `MessageScrollViewController.pinnedMessageMinY`'s
+/// `didSet` for why).
 struct MessageListContent: View {
     var messages: [Message]
     /// Sized by the view controller (needs `viewportHeight`/insets that live
@@ -18,6 +30,10 @@ struct MessageListContent: View {
     /// original `reserveHeight` doc comment for why this exists at all.
     var reserveHeight: CGFloat
     var onPinnedHeightChange: (CGFloat) -> Void = { _ in }
+    /// Position of the pinned (last user) row within this view's own
+    /// content — the "scrollContent" coordinate space is defined right
+    /// here, so it's unaffected by the enclosing UIScrollView's offset.
+    var onPinnedMinYChange: (CGFloat) -> Void = { _ in }
     /// Position of the very first row — the Beginning Boundary's own
     /// recovery target (architecture §2.12), distinct from the pinned row
     /// once there's more than one message.
@@ -56,6 +72,12 @@ struct MessageListContent: View {
                                     Color.clear
                                         .onChange(of: messageGeo.size.height, initial: true) { _, h in
                                             onPinnedHeightChange(h)
+                                        }
+                                        .onChange(
+                                            of: messageGeo.frame(in: .named("scrollContent")).minY,
+                                            initial: true
+                                        ) { _, y in
+                                            onPinnedMinYChange(y)
                                         }
                                 }
                             }

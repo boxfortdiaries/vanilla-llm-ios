@@ -11,6 +11,18 @@ import UIKit
 final class MessageScrollController {
     fileprivate weak var viewController: MessageScrollViewController?
 
+    /// Mirrors `ConversationList`'s `ownership` state down into the view
+    /// controller — needed so a rotation/size-class change (which reflows
+    /// content and can shift the pinned row's true position, architecture
+    /// milestone 6) only re-asserts the canonical scroll position while the
+    /// system actually owns the viewport (§4.6: automatic movement is only
+    /// permitted then). Forcing a re-scroll unconditionally on every
+    /// rotation would yank a user who's deliberately browsing history back
+    /// to the live position, which §4.6 explicitly bans.
+    var isSystemOwned: Bool = true {
+        didSet { viewController?.isSystemOwned = isSystemOwned }
+    }
+
     func scrollToCanonical(animated: Bool) {
         viewController?.scrollToCanonical(animated: animated)
     }
@@ -37,7 +49,6 @@ struct MessageScrollHost: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ vc: MessageScrollViewController, context: Context) {
-        vc.reduceMotion = context.environment.accessibilityReduceMotion
         vc.onAtBottomChange = onAtBottomChange
         vc.onUserScrolledAway = onUserScrolledAway
         // ponytail: contentInset changes (topInset/bottomInset — e.g.
@@ -71,7 +82,10 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
 
     var onAtBottomChange: (Bool) -> Void = { _ in }
     var onUserScrolledAway: () -> Void = {}
-    var reduceMotion = false
+    /// See `MessageScrollController.isSystemOwned` — gates whether a
+    /// rotation/size-class change is allowed to re-assert the canonical
+    /// scroll position.
+    var isSystemOwned = true
 
     var topInset: CGFloat = 0 {
         didSet {
@@ -88,10 +102,31 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
         }
     }
     var messages: [Message] = [] {
-        didSet { refreshContent() }
+        didSet {
+            // 2026-07-13: `updateUIViewController` assigns this on every
+            // SwiftUI update of `ConversationList` — including every
+            // composer keystroke, unrelated to the conversation itself —
+            // not just when messages actually changed. Without this guard,
+            // `refreshContent()` reassigns `hostingController.rootView`
+            // (and therefore re-evaluates the whole `MessageListContent`
+            // tree) dozens of times a second while typing. Strongly
+            // suspected root cause of a real hang: reassigning rootView
+            // while `MarkdownView`'s cascade-reveal animation
+            // (`CascadeRevealRenderer`) is still mid-flight can restart
+            // that animation from scratch on every reassignment, turning a
+            // normally-bounded ~1.1s animation into one that never
+            // completes as long as keystrokes keep arriving faster than it
+            // can finish. `Message` is `Equatable`, so this guard is free.
+            guard messages != oldValue else { return }
+            refreshContent()
+        }
     }
 
     private var pinnedMessageHeight: CGFloat = 0
+    /// The pinned (last user) row's position within the scroll content —
+    /// see `canonicalTargetY` for why this is measured directly rather than
+    /// derived from `contentSize`.
+    private var pinnedMessageMinY: CGFloat = 0
     /// The first message's position within the scroll content — the
     /// Beginning Boundary's own recovery target (architecture §2.12,
     /// revised 2026-07-12: the two elastic boundaries now recover to
@@ -116,9 +151,24 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
             messages: messages,
             reserveHeight: reserveHeight,
             onPinnedHeightChange: { [weak self] h in
-                guard let self, self.pinnedMessageHeight != h else { return }
+                // 2026-07-13: an *exact* equality guard here caused a real
+                // hang (confirmed via `sample` on the frozen process: a
+                // tight synchronous loop of this closure -> refreshContent()
+                // -> rootView reassignment -> re-measurement -> this closure
+                // again). Auto Layout's own measured height jitters by
+                // fractions of a point between passes (visible in this
+                // file's own NSLog output elsewhere — e.g. 39.333343... vs
+                // 39.333328...) even when nothing meaningful changed, so an
+                // exact-equality guard never converges: every re-measurement
+                // reads as "different," triggering another refresh forever.
+                // A tolerance is required, not optional — this isn't a
+                // style preference.
+                guard let self, abs(self.pinnedMessageHeight - h) > 0.5 else { return }
                 self.pinnedMessageHeight = h
                 self.refreshContent()
+            },
+            onPinnedMinYChange: { [weak self] y in
+                self?.pinnedMessageMinY = y
             },
             onFirstMinYChange: { [weak self] y in
                 self?.firstMessageMinY = y
@@ -213,6 +263,28 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
         guard scrollView.bounds.size != lastLayoutSize else { return }
         lastLayoutSize = scrollView.bounds.size
         refreshContent()
+        // A width change (rotation) can rewrap message text, changing row
+        // heights — the pinned row's on-screen position can drift even
+        // though `contentOffset` itself didn't change. Re-assert it, but
+        // only while the system owns the viewport (see `isSystemOwned`'s
+        // doc comment) — never yank a user who's browsing history.
+        //
+        // KNOWN LIMITATION (2026-07-13, not fully resolved): this
+        // meaningfully improves rotation (previously nothing corrected it
+        // at all) but isn't exact yet — measured via a UITest reading the
+        // real pinned-bubble frame, landing ~30pt off after a
+        // portrait→landscape→portrait round trip, vs. the ~1pt precision
+        // every other recovery path in this file achieves. Suspected cause,
+        // not confirmed: `topInset` itself comes from `ConversationView`'s
+        // own `headerHeight` GeometryReader, which may still be mid-recompute
+        // for the new orientation when this fires — `canonicalTargetY`
+        // would then be built from a still-stale `topInset`/`reserveHeight`
+        // pair. Next step if picked back up: log `topInset` at each
+        // `viewDidLayoutSubviews` call during a rotation to confirm whether
+        // it's still changing after this correction already ran.
+        if isSystemOwned {
+            scrollToCanonical(animated: false)
+        }
     }
 
     @objc private func handleTap() {
@@ -228,54 +300,25 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
     /// The canonical scroll position's content-offset y — the last user
     /// message pinned at `topInset` from the top.
     ///
-    /// Deliberately NOT derived from a per-row `GeometryReader` position
-    /// (an earlier version measured the pinned row's own `.frame(in:
-    /// .named("scrollContent"))` via `onChange`). That measurement is
-    /// provably unreliable for the *second+* user message: verified via
-    /// NSLog that the reported position is captured once, right as the row
-    /// is newly inserted into an already-populated `LazyVStack`, and never
-    /// self-corrects afterward — not even after forcing a synchronous
-    /// `layoutIfNeeded()` or a full fresh SwiftUI render immediately before
-    /// reading it. The first message never shows this (nothing precedes it
-    /// in an empty `LazyVStack`), which is why the bug only appeared from
-    /// message 2 onward.
-    ///
-    /// Instead this is derived purely from Auto Layout's own `contentSize`
-    /// (reliable — it's what `.sizingOptions = [.intrinsicContentSize]`
-    /// resolves, not a SwiftUI-side coordinate-space read): the reserve
-    /// spacer (`reserveHeight`) is sized so that when the pinned row sits at
-    /// `topInset`, the content's bottom edge lands exactly at the viewport's
-    /// bottom inset boundary — i.e. the canonical position IS "scrolled to
-    /// the natural bottom." `scrollViewWillEndDragging` below already computes
-    /// that same natural-bottom value (`naturalMaxY`) for elastic-boundary
-    /// detection; this reuses it. The `AppSpacing.md` term corrects for
+    /// Derived from Auto Layout's own `contentSize`, NOT the pinned row's
+    /// own `GeometryReader`-measured position — tried switching to the
+    /// latter on 2026-07-13 (structurally appealing: it only depends on
+    /// content *above* the pinned row, which should be stable, unlike
+    /// `contentSize` which includes the still-streaming reply below).
+    /// Measured result: messages 2-4 landed ~62pt off target, reproducing
+    /// the original bug this file exists to fix. So the per-row measurement
+    /// really is unreliable for row 2+ (confirmed twice now, not assumed),
+    /// for a reason not fully root-caused — don't retry this without new
+    /// evidence. The `contentSize` approach's own known tradeoff (a
+    /// visible correction pass while the reply is still streaming, which
+    /// can read as a slight bounce) is the accepted cost for correct
+    /// precision; `reserveHeight` is sized so "pinned row at `topInset`" is
+    /// equivalent to "content's bottom edge at the viewport's bottom
+    /// inset" (scroll to the natural max) — `scrollViewWillEndDragging`
+    /// below already computes that same value (`naturalMaxY`) for
+    /// elastic-boundary detection. The `AppSpacing.md` term corrects for
     /// `MessageListContent`'s own top/bottom vertical padding around its
     /// `LazyVStack`, which isn't part of the `reserveHeight` formula.
-    ///
-    /// RESOLVED (2026-07-13): `contentSize` read here, right after
-    /// `layoutIfNeeded()`, can still be off by roughly the height of one
-    /// row — root-caused via NSLog to a genuine Auto-Layout value (matches
-    /// the hosting view's own `frame`/`bounds`, so not a scroll-view-side
-    /// cache) that keeps resolving *during* the pin animation, not before
-    /// it, with zero further `messages` changes happening in between.
-    /// Neither an extra `layoutIfNeeded()` + `CATransaction.flush()` nor
-    /// waiting several `CADisplayLink` frames forced it to resolve early.
-    /// Depending on which way the stale read was wrong, this used to show
-    /// up as two different symptoms: message 3+ overshot and got silently
-    /// clamped short by `UIScrollView`'s own boundary logic (`finished=1`
-    /// but ~18pt short of the requested target — clamped to
-    /// `contentSize - bounds.height + bottomInset`, i.e. UIKit's own native
-    /// max, *without* this formula's `-AppSpacing.md` term); message 2
-    /// undershot and landed exactly on its own (stale, too-small) target —
-    /// no complaint from UIKit, `delta` reported 0.00, but ~28pt short of
-    /// the true pin position on screen. Both are the same root cause, just
-    /// opposite directions. Fix (see `scrollToCanonical` /
-    /// `correctResidualPinDrift`): don't try to read `contentSize`
-    /// correctly upfront — verify once the animation has actually finished
-    /// (when it's reliably settled) and close any residual gap with a
-    /// quick follow-up animation. Verified via the accessibility-tree frame
-    /// of each pinned bubble (not just the logged `contentOffset`): all of
-    /// messages 1-4 land within ~1pt of `topInset` after this pass.
     private var canonicalTargetY: CGFloat {
         scrollView.contentSize.height - scrollView.bounds.height + bottomInset - AppSpacing.md
     }
@@ -285,6 +328,16 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
     /// `topInset` from the top. Ported 1:1 from `ConversationList`'s
     /// original `moveToCanonicalAlignment`, now driving our own
     /// `UIScrollView` directly instead of `ScrollViewProxy.scrollTo`.
+    ///
+    /// A plain ease-out, not a spring (2026-07-13, per Dan — wants a smooth,
+    /// elegant settle with no bounce/overshoot at all, not just a heavily
+    /// damped spring). `.curveEaseOut` decelerates into the target and
+    /// cannot overshoot by construction, which sidesteps the actual problem
+    /// the earlier spring attempts kept hitting: any correction fired after
+    /// the primary move (see `correctResidualPinDrift`) reads as a
+    /// continuation of the same gentle deceleration rather than a distinct,
+    /// sometimes-bouncy second motion, because neither phase has any bounce
+    /// character to clash between them.
     func scrollToCanonical(animated: Bool) {
         guard hasLastUserMessage else { return }
         // Force any pending Auto Layout work to resolve synchronously before
@@ -304,27 +357,33 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
                 scrollView.contentOffset.y, target.y, scrollView.contentOffset.y - target.y, finished ? 1 : 0
             )
         }
-        if animated && !reduceMotion {
-            // Same spring shape as the original scrollTo-based path
-            // (response 0.42, dampingFraction 0.97) for programmatic moves
-            // (new message pin, "return to latest") — full control here
-            // since it's not a drag-release. Drag-release recovery below
-            // uses UIKit's own deceleration curve instead; see
-            // `scrollViewWillEndDragging`.
-            UIView.animate(
-                withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.97, initialSpringVelocity: 0,
-                options: [.allowUserInteraction], animations: {
-                    scrollView.contentOffset = target
-                },
-                completion: { [weak self] finished in
-                    logSettled(finished)
-                    self?.correctResidualPinDrift(from: target)
-                }
-            )
-        } else {
+        // `animated: false` (only `.onAppear`, opening a conversation) stays
+        // an instant snap — no scroll-in effect should be visible on open.
+        guard animated else {
             scrollView.contentOffset = target
             logSettled(true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.correctResidualPinDrift(from: target)
+            }
+            return
         }
+        // ponytail: tried deferring this whole block by 50ms and re-reading
+        // `canonicalTargetY` fresh before animating, on the theory that
+        // `contentSize` would have more time to settle first — measured via
+        // NSLog that it didn't reduce how often `correctResidualPinDrift`
+        // below still had work to do (contentSize keeps moving for as long
+        // as the reply is still streaming, not just briefly after send), so
+        // reverted the extra indirection. `correctResidualPinDrift` is the
+        // actual mechanism, not a rare safety net — expect it to fire for
+        // most message 2+ pins while a reply is mid-stream.
+        UIView.animate(
+            withDuration: 0.28, delay: 0, options: [.allowUserInteraction, .curveEaseOut],
+            animations: { scrollView.contentOffset = target },
+            completion: { [weak self] finished in
+                logSettled(finished)
+                self?.correctResidualPinDrift(from: target)
+            }
+        )
     }
 
     /// KNOWN LIMITATION workaround (see `canonicalTargetY`'s doc comment):
@@ -346,6 +405,18 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
     /// (landed exactly on its own now-stale target, no complaint from
     /// UIKit, but visually short of the true pin position) — this pass
     /// catches both.
+    ///
+    /// Instant, not eased (2026-07-13, per Dan, after even a bounce-free
+    /// `.curveEaseOut` here still read as a bounce). The curve itself was
+    /// never the culprit: when the primary move's target overshot the true
+    /// target (stale `contentSize` read too large), a *visible second glide
+    /// back* toward the true target — however smoothly curved — reads
+    /// exactly like spring overshoot to the eye, regardless of which easing
+    /// function drew it. An instant correction removes the second glide
+    /// entirely: only the primary ease-out is ever visible as motion, and
+    /// any correction is a single-frame, effectively imperceptible snap
+    /// immediately after it, rather than a distinct animated beat the eye
+    /// can follow.
     private func correctResidualPinDrift(from previousTarget: CGPoint) {
         let correctedTarget = CGPoint(x: previousTarget.x, y: canonicalTargetY)
         let residual = correctedTarget.y - scrollView.contentOffset.y
@@ -354,15 +425,11 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
             "[ScrollHost] residual drift correction from=%.2f to=%.2f (residual=%.2f)",
             scrollView.contentOffset.y, correctedTarget.y, residual
         )
-        let scrollView = scrollView
-        UIView.animate(withDuration: 0.15, delay: 0, options: [.allowUserInteraction, .curveEaseOut], animations: {
-            scrollView.contentOffset = correctedTarget
-        }, completion: { finished in
-            NSLog(
-                "[ScrollHost] residual drift settled=%.2f target=%.2f delta=%.2f finished=%d",
-                scrollView.contentOffset.y, correctedTarget.y, scrollView.contentOffset.y - correctedTarget.y, finished ? 1 : 0
-            )
-        })
+        scrollView.contentOffset = correctedTarget
+        NSLog(
+            "[ScrollHost] residual drift settled=%.2f target=%.2f delta=%.2f finished=1",
+            scrollView.contentOffset.y, correctedTarget.y, scrollView.contentOffset.y - correctedTarget.y
+        )
     }
 
     // MARK: - UIScrollViewDelegate

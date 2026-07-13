@@ -101,9 +101,15 @@ struct ConversationList: View {
             controller: scrollController,
             onAtBottomChange: { atBottom in
                 isAtBottom = atBottom
-                if atBottom { ownership = .system }
+                if atBottom {
+                    ownership = .system
+                    scrollController.isSystemOwned = true
+                }
             },
-            onUserScrolledAway: { ownership = .user }
+            onUserScrolledAway: {
+                ownership = .user
+                scrollController.isSystemOwned = false
+            }
         )
         // Extend behind the floating header and composer (so content dissolves
         // under both) but inset the content — and the pin target — so it rests
@@ -128,16 +134,27 @@ struct ConversationList: View {
         }
         .onChange(of: scrollToBottomTrigger) {
             ownership = .system
+            scrollController.isSystemOwned = true
             scrollController.scrollToCanonical(animated: true)
         }
     }
 
-    /// Pin the latest user message to the top, animating the scroll so earlier
-    /// turns visibly slide up and off the top ("get out of the way") as the new
-    /// message rises in — on the same spring as the message's rise so they move
-    /// together. The reply is held until this settles (see `ConversationView.handleSend`)
-    /// so it can't fight the scroll mid-flight, which is what made it jitter
-    /// before. Deferred one hop so the reserved space is laid out first.
+    /// Pin the latest user message to the top. Deferred one hop so the
+    /// reserved space is laid out first.
+    ///
+    /// Animated by default — a plain ease-out (see
+    /// `MessageScrollViewController.scrollToCanonical`'s doc comment for the
+    /// short history: a spring here read as inconsistent message-to-message
+    /// because of a *second*, separate correction pass
+    /// (`correctResidualPinDrift`) sometimes needing to run after the first
+    /// animation, an artifact of `canonicalTargetY`'s known
+    /// late-resolving-`contentSize` limitation; briefly went fully instant
+    /// everywhere to avoid that, but per Dan 2026-07-13 that lost the
+    /// elegance of an eased entrance, and a bounce-free ease-out doesn't
+    /// have the inconsistency problem a spring did, since neither phase has
+    /// any overshoot character to clash). Only the very first pin
+    /// (`.onAppear`, opening a conversation) stays an instant snap — no
+    /// scroll-in effect should be visible right as the screen appears.
     ///
     /// ponytail: confirmed via NSLog that lengthening this delay (tried
     /// 620ms, matching `ConversationView.handleSend`'s own settle wait)
@@ -148,6 +165,7 @@ struct ConversationList: View {
     /// .canonicalTargetY` for the actual fix.
     private func pinLatestTurn(animated: Bool = true) {
         ownership = .system
+        scrollController.isSystemOwned = true
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(50))
             scrollController.scrollToCanonical(animated: animated)
