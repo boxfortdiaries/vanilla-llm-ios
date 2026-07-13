@@ -61,11 +61,22 @@ struct ConversationView: View {
                         messages: viewModel.messages,
                         isAtBottom: $isAtBottom,
                         scrollToBottomTrigger: scrollToBottomTrigger,
-                        // headerHeight minus md: per Dan 2026-07, the pinned
-                        // message sat too low under the header — first xs
-                        // (16pt up), then this (another 24pt up), landing on
-                        // headerHeight - md overall.
-                        topInset: headerHeight - AppSpacing.md,
+                        // headerHeight plus md: per Dan 2026-07-12, the
+                        // pinned message needed ~156pt of clearance from the
+                        // device top on this device/config, and headerHeight
+                        // alone (~138pt here) read as too tight — reverses an
+                        // earlier tuning pass that had pulled this the other
+                        // way (previously `headerHeight - md`, when the gap
+                        // read as too loose). The header bar's own size is
+                        // unchanged; only the breathing room below it grew.
+                        // The `+ 2` closes the exact residual: `headerHeight +
+                        // md` alone measured 154pt (confirmed via the pinned
+                        // scroll target's own logged numbers, not eyeballed),
+                        // 2pt short of the intended 156 — coincidental to
+                        // which spacing token was available, not a
+                        // deliberate choice, so it gets its own explicit term
+                        // rather than silently folding into `md`.
+                        topInset: headerHeight + AppSpacing.md + 2,
                         // xl (not lg, like the header): pulled up a bit further
                         // per Dan 2026-07 — the header's own gap read as too
                         // tight once mirrored at the bottom.

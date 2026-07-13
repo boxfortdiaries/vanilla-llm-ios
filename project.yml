@@ -40,10 +40,28 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.local.llmios
         TARGETED_DEVICE_FAMILY: "1"
+  # ponytail: debug-only UI test target — the sandbox has no reliable
+  # synthetic-touch input for the simulator, but XCUITest drives the app
+  # through Apple's own accessibility/testmanagerd channel instead of fake
+  # mouse events, so it reliably reproduces the scroll bug's send flow.
+  # Not shipped, not referenced by the app target.
+  LLMDebugUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: LLMDebugUITests
+    dependencies:
+      - target: LLM-iOS
 schemes:
   LLM-iOS:
     build:
       targets:
         LLM-iOS: all
+        LLMDebugUITests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - LLMDebugUITests

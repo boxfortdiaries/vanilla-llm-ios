@@ -623,7 +623,9 @@ It is temporary presentation layered upon an otherwise unchanged viewport.
 
 # 2.12 ELASTIC BOUNDARIES
 
-The viewport defines two elastic boundaries.
+The viewport defines two elastic boundaries. Each has its own canonical alignment
+(revised per Dan, 2026-07-12 — superseding the single-shared-alignment rule this
+section originally stated).
 
 ## Beginning Boundary
 
@@ -631,7 +633,8 @@ Represents the beginning of the conversation.
 
 Temporary displacement beyond this boundary is permitted.
 
-Upon release, the viewport returns to the canonical alignment defined by the layout system.
+Upon release, the viewport returns to the **first message**, pinned at the same
+top offset every canonical alignment uses.
 
 ---
 
@@ -641,15 +644,21 @@ Represents the current end of the live conversation.
 
 Temporary displacement beyond this boundary is permitted.
 
-Upon release, the viewport returns to the canonical alignment defined by the layout system.
+Upon release, the viewport returns to the **last user message**, pinned at the
+same top offset.
 
 ---
 
-Both boundaries behave identically.
+The two boundaries recover to different messages, but the same alignment rule
+(pinned at the top offset) and the same elastic character (temporary
+displacement, deterministic release, ownership unaffected — see §2.13, §4.7).
 
-The implementation should not distinguish between them through different recovery behaviors.
-
-Users should unconsciously learn that every boundary behaves consistently.
+Approaching the Beginning Boundary without reaching it is ordinary in-bounds
+scrolling, not elastic interaction — see §4.4: it hands viewport ownership to
+the user, same as scrolling anywhere else in history. Only actually reaching
+and releasing past the boundary triggers the elastic snap to the first
+message; when the first message is also the last message (a single-message
+conversation) the two boundaries are indistinguishable, as before.
 
 ---
 
