@@ -153,12 +153,17 @@ final class ScrollBugUITests: XCTestCase {
     }
 
     /// Reproduces the suspected hang: type rapidly into the composer WHILE
-    /// a reply's cascade-reveal animation is still mid-flight (fired
-    /// immediately after send, not after the usual settle wait), which
-    /// forces many `MessageScrollViewController.messages` reassignments in
-    /// quick succession — each a potential cascade-restart trigger before
-    /// the `Message`-equality guard. If the app is still responsive
-    /// (field readable, no timeout) after this, the fix held.
+    /// a reply's cascade-reveal animation is still mid-flight, which forces
+    /// many `MessageScrollViewController.messages` reassignments in quick
+    /// succession — each a potential cascade-restart trigger before the
+    /// `Message`-equality guard. If the app is still responsive (field
+    /// readable, no timeout) after this, the fix held.
+    ///
+    /// 2026-07-16: `PromptComposer`'s `TextField` now disables while
+    /// `isGenerating`, so typing genuinely can't start until it re-enables —
+    /// which lands right as/after streaming finishes, i.e. right as the
+    /// cascade-reveal animation begins. Poll for that instead of assuming
+    /// the field is typable immediately after send (it no longer is).
     func testTypingDuringCascadeDoesNotHang() {
         let app = XCUIApplication()
         app.launch()
@@ -169,8 +174,14 @@ final class ScrollBugUITests: XCTestCase {
         field.typeText("Explain a complex topic simply")
         app.buttons["Send message"].tap()
 
-        // Don't wait for the reply to settle — type immediately and keep
-        // typing through the window the cascade animation would be playing.
+        let deadline = Date().addingTimeInterval(30)
+        while !field.isEnabled, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+
+        // Type immediately once typable — this lands right as the
+        // cascade-reveal animation begins, keeping the original intent:
+        // hammer the composer through the window that animation plays.
         for i in 0..<20 {
             field.tap()
             field.typeText("x")
@@ -244,5 +255,91 @@ final class ScrollBugUITests: XCTestCase {
 
         let returnToLatestVisible = app.buttons["New messages"].waitForExistence(timeout: 2)
         NSLog("[LargeResidualCheck] rotation mid-stream: return-to-latest visible: %d", returnToLatestVisible ? 1 : 0)
+    }
+
+    /// Milestone 7 (full regression): browsing history via a genuine manual
+    /// scroll-away, then returning via the "return to latest" button. The
+    /// core ownership handoff (architecture §4) — the whole reason
+    /// `scrollViewWillEndDragging`'s boundary-vs-in-bounds distinction
+    /// exists — has never had automated coverage in this file until now.
+    func testBrowseHistoryAndReturnToLatest() {
+        let app = XCUIApplication()
+        app.launch()
+
+        let field = app.textFields["Message"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+
+        for text in ["First message", "Second message", "Third message"] {
+            // Poll for the field to re-enable rather than a fixed sleep — the
+            // composer disables while generating, and the default canned
+            // reply's streaming duration isn't always under a fixed guess.
+            let deadline = Date().addingTimeInterval(30)
+            while !field.isEnabled, Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+            field.tap()
+            field.typeText(text)
+            app.buttons["Send message"].tap()
+        }
+        let finalDeadline = Date().addingTimeInterval(30)
+        while !field.isEnabled, Date() < finalDeadline {
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+
+        XCTAssertFalse(app.buttons["New messages"].exists, "should start at the live position with no return-to-latest button")
+
+        // A real in-bounds drag away from the live position — not an elastic
+        // tug at a boundary — should hand ownership to `.user` (§4.4). The
+        // pinned (latest) message rests at the TOP already, so revealing
+        // earlier history means dragging top-to-bottom (decreasing
+        // contentOffset), not the other way around.
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+        start.press(forDuration: 0.05, thenDragTo: end)
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let returnButton = app.buttons["New messages"]
+        let becameVisible = returnButton.waitForExistence(timeout: 2)
+        NSLog("[RegressionCheck] return-to-latest visible after manual scroll-away: %d", becameVisible ? 1 : 0)
+        XCTAssertTrue(becameVisible, "scrolling away from the live position should surface return-to-latest")
+
+        returnButton.tap()
+        Thread.sleep(forTimeInterval: 1)
+        let goneAfterReturn = !app.buttons["New messages"].exists
+        NSLog("[RegressionCheck] return-to-latest gone after tapping it: %d", goneAfterReturn ? 1 : 0)
+        XCTAssertTrue(goneAfterReturn)
+
+        logPinnedFrame(app: app, content: "Third message", label: "after-return-to-latest")
+    }
+
+    /// Milestone 7 (full regression): the composer's `TextField` disables
+    /// while generating (`.disabled(isGenerating)` in `PromptComposer`), so
+    /// it can't be re-focused mid-stream — but the scroll view's own
+    /// tap-to-dismiss gesture is independent of the field's enabled state.
+    /// Confirms that still works, and nothing hangs, while a reply is
+    /// actively streaming.
+    func testKeyboardDismissDuringStreaming() {
+        let app = XCUIApplication()
+        app.launch()
+
+        let field = app.textFields["Message"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("Write me an essay")
+        app.buttons["Send message"].tap()
+
+        Thread.sleep(forTimeInterval: 1)
+        let keyboardUpMidStream = app.keyboards.element.exists
+        NSLog("[RegressionCheck] keyboard still up right after send mid-stream: %d", keyboardUpMidStream ? 1 : 0)
+
+        let emptySpace = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+        emptySpace.tap()
+        Thread.sleep(forTimeInterval: 0.5)
+        let dismissedMidStream = !app.keyboards.element.exists
+        NSLog("[RegressionCheck] keyboard dismissed by tap while streaming: %d", dismissedMidStream ? 1 : 0)
+
+        let stillResponsive = field.waitForExistence(timeout: 5)
+        NSLog("[RegressionCheck] field still exists after keyboard-dismiss-mid-stream: %d", stillResponsive ? 1 : 0)
+        XCTAssertTrue(stillResponsive)
     }
 }
