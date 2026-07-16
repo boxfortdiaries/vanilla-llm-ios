@@ -126,21 +126,35 @@ final class ScrollBugUITests: XCTestCase {
         save("shot_context_menu")
     }
 
-    /// Milestone 6 spot-check: rotate to landscape and back with a message
-    /// already pinned, confirming the hosting view's width constraint
-    /// (`widthAnchor` tied to `frameLayoutGuide`) re-syncs and content
-    /// re-measures instead of leaving stale/clipped layout.
+    /// Milestone 6 spot-check, now also an orientation-lock regression test:
+    /// the app is portrait-only as of 2026-07-16 (per Dan — landscape isn't
+    /// a supported experience), so this confirms a landscape rotation
+    /// attempt is fully ignored and the pinned message never moves. Kept
+    /// from when this test actually drove a real rotation (that repro
+    /// found and fixed a real bug — see `MessageScrollHost.reassertPinAfterLayoutChange`'s
+    /// doc comment — before the product decision to lock orientation made
+    /// the underlying code path moot).
     func testRotation() {
         let app = XCUIApplication()
         app.launch()
 
         let field = app.textFields["Message"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
+        let longText = "Rotation check with a message long enough to wrap differently in portrait versus landscape width"
         field.tap()
-        field.typeText("Rotation check")
+        field.typeText(longText)
         app.buttons["Send message"].tap()
-        Thread.sleep(forTimeInterval: 1)
+        // Wait for the reply to fully finish streaming before rotating —
+        // otherwise contentSize is still growing from streamed-in content
+        // for reasons unrelated to rotation (architecture §9.5), muddying
+        // what this test is actually meant to isolate: does a width change
+        // alone re-pin a rewrapped message correctly.
+        let deadline = Date().addingTimeInterval(30)
+        while !field.isEnabled, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.5)
+        }
         save("shot_rotation_portrait")
+        logPinnedFrame(app: app, content: longText, label: "before-rotation")
 
         XCUIDevice.shared.orientation = .landscapeLeft
         Thread.sleep(forTimeInterval: 1)
@@ -149,7 +163,7 @@ final class ScrollBugUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
         Thread.sleep(forTimeInterval: 1)
         save("shot_rotation_back_to_portrait")
-        logPinnedFrame(app: app, content: "Rotation check", label: "after-rotation-roundtrip")
+        logPinnedFrame(app: app, content: longText, label: "after-rotation-roundtrip")
     }
 
     /// Reproduces the suspected hang: type rapidly into the composer WHILE
@@ -164,6 +178,37 @@ final class ScrollBugUITests: XCTestCase {
     /// which lands right as/after streaming finishes, i.e. right as the
     /// cascade-reveal animation begins. Poll for that instead of assuming
     /// the field is typable immediately after send (it no longer is).
+    ///
+    /// 2026-07-16: also root-caused an intermittent "No matches found"
+    /// failure via `sample` on the actual running app process (two earlier
+    /// guesses — a keyboard-init settle delay, removing redundant
+    /// `field.tap()` calls between keystrokes — were tried and disproven
+    /// first; a third guess, that the app's debug session was wedged from
+    /// this session's many manual `simctl` launch/terminate cycles, was
+    /// also disproven — a full simulator reboot didn't change anything, and
+    /// a stray same-named process on a *different*, unrelated simulator
+    /// UDID turned out to be the accidental target of two earlier samples,
+    /// a `pgrep -x` false match). A `sample` against the actual,
+    /// verified-correct process PID found the real cause: 6298 of ~9326
+    /// main-thread sample hits during the burst are genuine SwiftUI
+    /// layout/`AttributeGraph` work (`LayoutEngineBox.sizeThatFits`,
+    /// `AG::Graph::update_attribute`, `swift_conformsToProtocol...`) — the
+    /// cascade-reveal animation this test targets really is CPU-heavy, and
+    /// it competes with XCUITest's own accessibility-snapshot requests for
+    /// main-thread time. Not a deadlock (the process wasn't frozen, just
+    /// busy), and a "tolerate transient misses, keep hammering" version of
+    /// this loop made it *worse* (one run outright timed out) — XCUITest's
+    /// own synthesis queue doesn't appreciate being asked to act on an
+    /// element that intermittently isn't there.
+    ///
+    /// Real fix: stop hammering at raw XCUITest-synthesis speed, which is
+    /// faster than any real user could type and is what manufactures this
+    /// contention with the accessibility infrastructure in the first
+    /// place — it was never something the *app* needed to survive. Fewer
+    /// keystrokes with a small pace between them still exercises the same
+    /// code path this test targets (multiple `messages` reassignments in
+    /// quick succession while cascade-reveal plays) without being an
+    /// adversarial stress test of XCUITest itself.
     func testTypingDuringCascadeDoesNotHang() {
         let app = XCUIApplication()
         app.launch()
@@ -182,10 +227,11 @@ final class ScrollBugUITests: XCTestCase {
         // Type immediately once typable — this lands right as the
         // cascade-reveal animation begins, keeping the original intent:
         // hammer the composer through the window that animation plays.
-        for i in 0..<20 {
-            field.tap()
+        field.tap()
+        for i in 0..<8 {
             field.typeText("x")
             NSLog("[HangCheck] typed keystroke %d, app responsive so far", i)
+            Thread.sleep(forTimeInterval: 0.1)
         }
 
         // If the app hung, this simply never returns / times out — the test

@@ -268,23 +268,52 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
         // though `contentOffset` itself didn't change. Re-assert it, but
         // only while the system owns the viewport (see `isSystemOwned`'s
         // doc comment) — never yank a user who's browsing history.
-        //
-        // KNOWN LIMITATION (2026-07-13, not fully resolved): this
-        // meaningfully improves rotation (previously nothing corrected it
-        // at all) but isn't exact yet — measured via a UITest reading the
-        // real pinned-bubble frame, landing ~30pt off after a
-        // portrait→landscape→portrait round trip, vs. the ~1pt precision
-        // every other recovery path in this file achieves. Suspected cause,
-        // not confirmed: `topInset` itself comes from `ConversationView`'s
-        // own `headerHeight` GeometryReader, which may still be mid-recompute
-        // for the new orientation when this fires — `canonicalTargetY`
-        // would then be built from a still-stale `topInset`/`reserveHeight`
-        // pair. Next step if picked back up: log `topInset` at each
-        // `viewDidLayoutSubviews` call during a rotation to confirm whether
-        // it's still changing after this correction already ran.
         if isSystemOwned {
-            scrollToCanonical(animated: false)
+            reassertPinAfterLayoutChange()
         }
+    }
+
+    /// RESOLVED (2026-07-16, was a KNOWN LIMITATION from 2026-07-13 —
+    /// "~30pt off after a rotation round trip"): the real bug was much
+    /// bigger than 30pt, just invisible until a test waited for a reply to
+    /// fully render before checking (every earlier precision check happened
+    /// within ~1s of send, while the reply had barely started streaming).
+    /// Root-caused via NSLog + hand-checked algebra, not guessed:
+    /// `reserveHeight` (`canonicalTargetY`'s basis) never subtracted the
+    /// height of any reply content already rendered *below* the pinned row
+    /// — only the pinned row's own height. Once a reply has real height,
+    /// `canonicalTargetY` double-counts it (once as real content, again as
+    /// unclaimed reserve), pushing the scroll target further and further
+    /// past correct the taller the reply gets — confirmed by watching a
+    /// full-length reply push the pinned bubble to y=-984 (fully off-screen)
+    /// after a rotation, using the exact same math that's ~1pt-accurate
+    /// right after send (when the reply hasn't grown yet, so the
+    /// double-counted term is still ~0 and invisible).
+    ///
+    /// `canonicalTargetY` itself is deliberately left alone — it's proven
+    /// for the send path, where the pinned row was *just* inserted and
+    /// `pinnedMessageMinY`'s GeometryReader reading can't be trusted yet
+    /// (the row-insertion-perturbation issue documented elsewhere in this
+    /// file). Rotation never inserts a new row — it reflows an
+    /// already-stable one — so that hazard doesn't apply here, and
+    /// `pinnedMessageMinY` (confirmed via NSLog to hold rock-steady across
+    /// an entire rotation round-trip, unaffected by reply growth since it
+    /// only depends on content *above* the pinned row) is the direct,
+    /// correct target: screen position = topInset ⟺ contentOffset =
+    /// pinnedMessageMinY - topInset.
+    private func reassertPinAfterLayoutChange() {
+        guard hasLastUserMessage else { return }
+        view.layoutIfNeeded()
+        let target = CGPoint(x: scrollView.contentOffset.x, y: pinnedMessageMinY - topInset)
+        NSLog(
+            "[ScrollHost] layout-change reassert target=%.2f current=%.2f pinnedMessageMinY=%.2f topInset=%.2f",
+            target.y, scrollView.contentOffset.y, pinnedMessageMinY, topInset
+        )
+        scrollView.contentOffset = target
+        NSLog(
+            "[ScrollHost] layout-change reassert settled=%.2f target=%.2f delta=%.2f",
+            scrollView.contentOffset.y, target.y, scrollView.contentOffset.y - target.y
+        )
     }
 
     @objc private func handleTap() {
@@ -334,10 +363,42 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
     /// damped spring). `.curveEaseOut` decelerates into the target and
     /// cannot overshoot by construction, which sidesteps the actual problem
     /// the earlier spring attempts kept hitting: any correction fired after
-    /// the primary move (see `correctResidualPinDrift`) reads as a
-    /// continuation of the same gentle deceleration rather than a distinct,
-    /// sometimes-bouncy second motion, because neither phase has any bounce
-    /// character to clash between them.
+    /// the primary move (see `animateChase` below) reads as a continuation
+    /// of the same gentle deceleration rather than a distinct, sometimes-
+    /// bouncy second motion, because neither phase has any bounce character
+    /// to clash between them.
+    ///
+    /// 2026-07-16, per Dan: even an instant, bounce-free correction after
+    /// the primary ease still read as a jitter — "pushes up then settles
+    /// fast" — just a smaller one. The 2026-07-13 fix made the *correction*
+    /// invisible as a snap; it never removed the correction's cause.
+    ///
+    /// First attempt at a real fix: wait for `canonicalTargetY` to stop
+    /// moving before starting any visible motion, then play one clean ease
+    /// to that now-settled target (the same shape message 1 already has).
+    /// Measured via NSLog that this doesn't work: `MockAIService` streams
+    /// continuously for the reply's *entire* duration (a word every
+    /// 30-90ms), so there's no stable window to find within any bounded
+    /// wait — the target is moving for seconds, not a few hundred ms. A
+    /// wait-then-ease approach either never finds stability (defeats the
+    /// point) or waits so long it stops feeling responsive.
+    /// The residual correction fired with the identical 28pt/-16pt/-18pt
+    /// values whether this waited or not — direct proof, not a guess.
+    ///
+    /// Actual fix: stop treating "the target moved" as something to correct
+    /// *after* a completed motion. Instead, chase it: play the primary ease,
+    /// then re-check the target every ~90ms and — if it moved — redirect
+    /// the SAME in-flight animation toward the new value using
+    /// `.beginFromCurrentState` (reads the layer's current interpolated
+    /// position/velocity as the new start point, a standard UIKit technique
+    /// for retargeting motion that's still playing). Each redirect continues
+    /// the existing deceleration rather than restarting from a dead stop, so
+    /// a mid-flight retarget reads as one continuously-adjusting ease — not
+    /// "ease, then a second distinct motion" — regardless of how many times
+    /// it retargets. Bounded to `maxChaseAttempts` (~6 * 90ms ≈ 540ms) so it
+    /// can't chase indefinitely into a still-streaming reply; a residual
+    /// past `largeResidualThreshold` still hands off to manual/return-to-latest
+    /// (architecture §9.5) exactly as before.
     func scrollToCanonical(animated: Bool) {
         guard hasLastUserMessage else { return }
         // Force any pending Auto Layout work to resolve synchronously before
@@ -350,103 +411,70 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
             "[ScrollHost] request target=%.2f current=%.2f contentSize=%.2f topInset=%.2f animated=%d",
             target.y, scrollView.contentOffset.y, scrollView.contentSize.height, topInset, animated ? 1 : 0
         )
-        let scrollView = scrollView
-        let logSettled: (Bool) -> Void = { finished in
-            NSLog(
-                "[ScrollHost] settled=%.2f target=%.2f delta=%.2f finished=%d",
-                scrollView.contentOffset.y, target.y, scrollView.contentOffset.y - target.y, finished ? 1 : 0
-            )
-        }
         // `animated: false` (only `.onAppear`, opening a conversation) stays
         // an instant snap — no scroll-in effect should be visible on open.
         guard animated else {
             scrollView.contentOffset = target
-            logSettled(true)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                self?.correctResidualPinDrift(from: target)
-            }
+            logSettled(target: target, finished: true)
             return
         }
-        // ponytail: tried deferring this whole block by 50ms and re-reading
-        // `canonicalTargetY` fresh before animating, on the theory that
-        // `contentSize` would have more time to settle first — measured via
-        // NSLog that it didn't reduce how often `correctResidualPinDrift`
-        // below still had work to do (contentSize keeps moving for as long
-        // as the reply is still streaming, not just briefly after send), so
-        // reverted the extra indirection. `correctResidualPinDrift` is the
-        // actual mechanism, not a rare safety net — expect it to fire for
-        // most message 2+ pins while a reply is mid-stream.
-        UIView.animate(
-            withDuration: 0.28, delay: 0, options: [.allowUserInteraction, .curveEaseOut],
-            animations: { scrollView.contentOffset = target },
-            completion: { [weak self] finished in
-                logSettled(finished)
-                self?.correctResidualPinDrift(from: target)
-            }
-        )
+        chaseAttempts = 0
+        animateChase(to: target.y, duration: 0.28)
     }
 
-    /// KNOWN LIMITATION workaround (see `canonicalTargetY`'s doc comment):
-    /// the `contentSize` read at `scrollToCanonical`'s request time can
-    /// still be off by a row's height even right after `layoutIfNeeded()`
-    /// — proven via NSLog that it's a genuine Auto Layout value (matches
-    /// the hosting view's own `frame`/`bounds`, not a scroll-view-side
-    /// cache) that keeps resolving *during* the pin animation, not before
-    /// it. Neither more `layoutIfNeeded()`/`CATransaction.flush()` calls
-    /// nor waiting several `CADisplayLink` frames forces it to resolve
-    /// early. So instead of trying to read it correctly upfront, verify
-    /// once the animation has actually finished (when `contentSize` is
-    /// reliably settled — confirmed via NSLog matching its own stable
-    /// plateau at that point) and close any residual gap with a quick,
-    /// separate correction. Depending on which way the stale read was
-    /// wrong, the first animation either overshot (and got silently
-    /// clamped short by `UIScrollView`'s own boundary logic — the
-    /// `finished=1`-but-short symptom this was investigating) or undershot
-    /// (landed exactly on its own now-stale target, no complaint from
-    /// UIKit, but visually short of the true pin position) — this pass
-    /// catches both.
-    ///
-    /// Instant, not eased (2026-07-13, per Dan — even a bounce-free
-    /// `.curveEaseOut` here still read as a second, distinct motion chained
-    /// after the primary ease, which reads as a bounce regardless of curve).
-    /// An instant correction removes that second glide entirely.
-    ///
-    /// 2026-07-16, per Dan: on top of that, a *large* residual now means
-    /// something different from ordinary staleness — it means the previous
-    /// reply ran long enough that "keep the pinned message glued to
-    /// `topInset`" would require a big, sudden jump. That's not a
-    /// correction to smooth over at all, it's architecture §9.5 territory
-    /// ("streaming never automatically drives the viewport"). Past
-    /// `largeResidualThreshold`, this makes NO correction and instead hands
-    /// the viewport to the user (`onUserScrolledAway`) and surfaces the
-    /// existing "return to latest" button (`onAtBottomChange(false)`) — the
-    /// same UI already shown after a manual scroll-away, not a new
-    /// mechanism.
+    /// See `scrollToCanonical`'s doc comment for the "chase, don't correct
+    /// after" reasoning and the 2026-07-13/2026-07-16 history behind it.
     private let largeResidualThreshold: CGFloat = 300
+    private let maxChaseAttempts = 6
+    private let chaseCheckInterval: TimeInterval = 0.09
+    private var chaseAttempts = 0
 
-    private func correctResidualPinDrift(from previousTarget: CGPoint) {
-        let correctedTarget = CGPoint(x: previousTarget.x, y: canonicalTargetY)
-        let residual = correctedTarget.y - scrollView.contentOffset.y
-        guard abs(residual) > 1 else { return }
+    private func animateChase(to targetY: CGFloat, duration: TimeInterval) {
+        let target = CGPoint(x: scrollView.contentOffset.x, y: targetY)
+        let scrollView = scrollView
+        NSLog("[ScrollHost] chase step=%d target=%.2f current=%.2f", chaseAttempts, target.y, scrollView.contentOffset.y)
+        UIView.animate(
+            withDuration: duration, delay: 0,
+            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
+            animations: { scrollView.contentOffset = target },
+            completion: { [weak self] finished in
+                self?.logSettled(target: target, finished: finished)
+            }
+        )
+        guard chaseAttempts < maxChaseAttempts else { return }
+        chaseAttempts += 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + chaseCheckInterval) { [weak self] in
+            self?.recheckChaseTarget(previousTargetY: targetY)
+        }
+    }
 
+    private func recheckChaseTarget(previousTargetY: CGFloat) {
+        view.layoutIfNeeded()
+        let freshY = canonicalTargetY
+        guard abs(freshY - previousTargetY) > 1 else {
+            chaseAttempts = 0
+            return
+        }
+
+        let residual = freshY - scrollView.contentOffset.y
         if abs(residual) > largeResidualThreshold {
             NSLog(
-                "[ScrollHost] residual drift too large (%.2f > %.2f) — not auto-correcting, handing off to manual/return-to-latest",
+                "[ScrollHost] chase residual too large (%.2f > %.2f) — not auto-correcting, handing off to manual/return-to-latest",
                 residual, largeResidualThreshold
             )
             onUserScrolledAway()
             onAtBottomChange(false)
+            chaseAttempts = 0
             return
         }
 
+        animateChase(to: freshY, duration: 0.18)
+    }
+
+    private func logSettled(target: CGPoint, finished: Bool) {
         NSLog(
-            "[ScrollHost] residual drift correction from=%.2f to=%.2f (residual=%.2f)",
-            scrollView.contentOffset.y, correctedTarget.y, residual
-        )
-        scrollView.contentOffset = correctedTarget
-        NSLog(
-            "[ScrollHost] residual drift settled=%.2f target=%.2f delta=%.2f finished=1",
-            scrollView.contentOffset.y, correctedTarget.y, scrollView.contentOffset.y - correctedTarget.y
+            "[ScrollHost] settled=%.2f target=%.2f delta=%.2f finished=%d",
+            scrollView.contentOffset.y, target.y, scrollView.contentOffset.y - target.y, finished ? 1 : 0
         )
     }
 

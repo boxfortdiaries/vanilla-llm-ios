@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import PhotosUI
 import UniformTypeIdentifiers
 
@@ -38,6 +39,13 @@ struct PromptComposer: View {
     private var canSend: Bool {
         let hasContent = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty
         return hasContent && !isGenerating
+    }
+
+    /// A one-line field's measured height at the current Dynamic Type size,
+    /// plus a small tolerance for rendering variance — the cutoff `isMultiline`
+    /// compares against.
+    private var singleLineThreshold: CGFloat {
+        UIFont.preferredFont(forTextStyle: .body).lineHeight + 4
     }
 
     var body: some View {
@@ -125,10 +133,14 @@ struct PromptComposer: View {
                 .padding(.horizontal, 16)
                 .background {
                     // Measure the text height (before the vertical padding below,
-                    // so no feedback loop) to tell one line from many.
+                    // so no feedback loop) to tell one line from many. Threshold
+                    // tracks the current Dynamic Type size (`UIFont.preferredFont`
+                    // reflects it directly) instead of a fixed point value — a
+                    // fixed 30pt read as "multiline" for even a single word once
+                    // one line alone exceeds 30pt at larger accessibility sizes.
                     GeometryReader { proxy in
                         Color.clear.onChange(of: proxy.size.height, initial: true) { _, h in
-                            isMultiline = h > 30 // ponytail: assumes default Dynamic Type
+                            isMultiline = h > singleLineThreshold
                         }
                     }
                 }
