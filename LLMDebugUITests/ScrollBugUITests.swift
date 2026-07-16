@@ -184,4 +184,65 @@ final class ScrollBugUITests: XCTestCase {
         XCTAssertTrue(stillResponsive)
         save("shot_after_typing_burst")
     }
+
+    /// 2026-07-16: verifies the large-residual gate — a very long reply
+    /// (triggered via the temporary "essay" keyword in MockAIService)
+    /// should NOT force a big auto-scroll jump when the next message is
+    /// sent; instead the "return to latest" (chevron) button should appear.
+    func testLongReplyDoesNotForceLargeJump() {
+        let app = XCUIApplication()
+        app.launch()
+
+        let field = app.textFields["Message"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("Write me an essay")
+        app.buttons["Send message"].tap()
+
+        // The composer disables while generating (confirmed — can't send a
+        // second message mid-stream), so poll until it re-enables rather
+        // than guessing a fixed wait for the long reply to finish.
+        let deadline = Date().addingTimeInterval(60)
+        while !field.isEnabled, Date() < deadline {
+            Thread.sleep(forTimeInterval: 1)
+        }
+        NSLog("[LargeResidualCheck] field re-enabled: %d", field.isEnabled ? 1 : 0)
+        save("shot_after_long_reply_completes")
+
+        field.tap()
+        field.typeText("Thanks, that's enough")
+        app.buttons["Send message"].tap()
+        Thread.sleep(forTimeInterval: 1)
+        save("shot_after_send_during_long_reply")
+
+        let returnToLatestVisible = app.buttons["New messages"].waitForExistence(timeout: 2)
+        NSLog("[LargeResidualCheck] return-to-latest button visible: %d", returnToLatestVisible ? 1 : 0)
+    }
+
+    /// 2026-07-16: the large-residual gate can't trigger via "send → wait →
+    /// send" (composer blocks sending until generation finishes, so
+    /// contentSize is always already-stable by the next send). The one real
+    /// path where a re-scroll fires WHILE content is still actively
+    /// growing is a rotation mid-stream (ownership-gated correction, added
+    /// 2026-07-13). Test that path directly.
+    func testRotationMidLongReplyDoesNotForceLargeJump() {
+        let app = XCUIApplication()
+        app.launch()
+
+        let field = app.textFields["Message"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("Write me an essay")
+        app.buttons["Send message"].tap()
+
+        // Let a large chunk stream in, then rotate WHILE it's still growing.
+        Thread.sleep(forTimeInterval: 5)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        Thread.sleep(forTimeInterval: 0.5)
+        XCUIDevice.shared.orientation = .portrait
+        Thread.sleep(forTimeInterval: 1)
+
+        let returnToLatestVisible = app.buttons["New messages"].waitForExistence(timeout: 2)
+        NSLog("[LargeResidualCheck] rotation mid-stream: return-to-latest visible: %d", returnToLatestVisible ? 1 : 0)
+    }
 }

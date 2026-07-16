@@ -56,6 +56,13 @@ final class MockAIService: AIService {
     private static func response(for message: String) -> String {
         let lowercased = message.lowercased()
 
+        // A long, multi-screen reply — used by `ScrollBugUITests`'
+        // large-residual-gate tests (2026-07-16) to exercise a reply that
+        // outgrows a single screen, same role as "code"/"table" below.
+        if lowercased.contains("essay") {
+            return Array(repeating: "This is a very long paragraph meant to push the reply well past a full screen of content so the reserve space runs out and the pinned message can no longer stay glued to the top without a large jump.", count: 12).joined(separator: "\n\n")
+        }
+
         if lowercased.contains("code") || lowercased.contains("swift") || lowercased.contains("function") {
             return """
             Here's a simple example:

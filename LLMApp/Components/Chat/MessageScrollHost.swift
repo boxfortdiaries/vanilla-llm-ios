@@ -406,21 +406,39 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
     /// UIKit, but visually short of the true pin position) — this pass
     /// catches both.
     ///
-    /// Instant, not eased (2026-07-13, per Dan, after even a bounce-free
-    /// `.curveEaseOut` here still read as a bounce). The curve itself was
-    /// never the culprit: when the primary move's target overshot the true
-    /// target (stale `contentSize` read too large), a *visible second glide
-    /// back* toward the true target — however smoothly curved — reads
-    /// exactly like spring overshoot to the eye, regardless of which easing
-    /// function drew it. An instant correction removes the second glide
-    /// entirely: only the primary ease-out is ever visible as motion, and
-    /// any correction is a single-frame, effectively imperceptible snap
-    /// immediately after it, rather than a distinct animated beat the eye
-    /// can follow.
+    /// Instant, not eased (2026-07-13, per Dan — even a bounce-free
+    /// `.curveEaseOut` here still read as a second, distinct motion chained
+    /// after the primary ease, which reads as a bounce regardless of curve).
+    /// An instant correction removes that second glide entirely.
+    ///
+    /// 2026-07-16, per Dan: on top of that, a *large* residual now means
+    /// something different from ordinary staleness — it means the previous
+    /// reply ran long enough that "keep the pinned message glued to
+    /// `topInset`" would require a big, sudden jump. That's not a
+    /// correction to smooth over at all, it's architecture §9.5 territory
+    /// ("streaming never automatically drives the viewport"). Past
+    /// `largeResidualThreshold`, this makes NO correction and instead hands
+    /// the viewport to the user (`onUserScrolledAway`) and surfaces the
+    /// existing "return to latest" button (`onAtBottomChange(false)`) — the
+    /// same UI already shown after a manual scroll-away, not a new
+    /// mechanism.
+    private let largeResidualThreshold: CGFloat = 300
+
     private func correctResidualPinDrift(from previousTarget: CGPoint) {
         let correctedTarget = CGPoint(x: previousTarget.x, y: canonicalTargetY)
         let residual = correctedTarget.y - scrollView.contentOffset.y
         guard abs(residual) > 1 else { return }
+
+        if abs(residual) > largeResidualThreshold {
+            NSLog(
+                "[ScrollHost] residual drift too large (%.2f > %.2f) — not auto-correcting, handing off to manual/return-to-latest",
+                residual, largeResidualThreshold
+            )
+            onUserScrolledAway()
+            onAtBottomChange(false)
+            return
+        }
+
         NSLog(
             "[ScrollHost] residual drift correction from=%.2f to=%.2f (residual=%.2f)",
             scrollView.contentOffset.y, correctedTarget.y, residual
