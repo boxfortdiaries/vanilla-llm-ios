@@ -21,6 +21,14 @@ final class NavigationCoordinator {
     }
 
     /// Switch the root screen to an existing conversation and close the drawer.
+    // ponytail: not wrapped in `withAnimation` — tried animating this
+    // (matching the drawer's own slide curve) so a conversation switch's
+    // entrance felt the same from every trigger, but the composer's glass
+    // buttons (rebuilt fresh alongside the content on every switch) kept
+    // flickering/re-forming under any animated transaction wrapping this,
+    // no matter how narrowly the animation was scoped away from them (tried
+    // three different approaches, none worked). Per Dan 2026-07-18: plain
+    // and instant beats fighting the glass system for a "nice" transition.
     func switchTo(_ id: UUID) {
         currentConversationID = id
         isSidebarOpen = false
