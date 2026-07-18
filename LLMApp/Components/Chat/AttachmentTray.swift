@@ -51,6 +51,9 @@ struct AttachmentTray: View {
     var availableWidth: CGFloat? = nil
     /// Forwarded to each `AttachmentTileView` — see its own doc comment.
     var onTapImage: ((Attachment) -> Void)? = nil
+    /// Forwarded to each `AttachmentTileView`'s `onFrameChange`, identifying
+    /// which attachment's frame changed (a tray can hold several tiles).
+    var onFrameChange: ((Attachment, CGRect) -> Void)? = nil
     /// Forwarded to each `AttachmentTileView` — see its own doc comment.
     var simulateGenerating: Bool = false
 
@@ -145,7 +148,9 @@ struct AttachmentTray: View {
                 let shown = !staggers || appeared
                 AttachmentTileView(
                     attachment: attachment, tileSize: tileSize, tileWidth: tileWidth, corner: corner,
-                    onTapImage: onTapImage, simulateGenerating: simulateGenerating
+                    onTapImage: onTapImage,
+                    onFrameChange: onFrameChange.map { report in { frame in report(attachment, frame) } },
+                    simulateGenerating: simulateGenerating
                 )
                     .overlay(alignment: .topTrailing) { removeButton(attachment) }
                     .opacity(shown ? 1 : 0)

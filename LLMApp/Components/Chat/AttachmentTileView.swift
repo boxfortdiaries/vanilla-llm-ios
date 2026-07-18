@@ -18,6 +18,12 @@ struct AttachmentTileView: View {
     /// (default) keeps the tile a plain, non-interactive view, so callers
     /// that don't opt in (composer preview, sent-message row) are unaffected.
     var onTapImage: ((Attachment) -> Void)? = nil
+    /// Reports this tile's true on-screen frame (window coordinates)
+    /// whenever it changes — only meaningful alongside `onTapImage`, so the
+    /// tap-to-preview hero transition knows where to animate from. See
+    /// `WindowFrameReader`'s own doc comment for why this isn't a plain
+    /// `GeometryReader`.
+    var onFrameChange: ((CGRect) -> Void)? = nil
     /// When true, an image tile shows a shimmering placeholder first and
     /// reveals the real image after a random 2-4s delay — simulates images
     /// arriving from a generation backend at staggered times instead of all
@@ -64,6 +70,7 @@ struct AttachmentTileView: View {
         }
     }
 
+    @ViewBuilder
     private func imageTile(_ image: UIImage) -> some View {
         let tile = Image(uiImage: image)
             .resizable()
@@ -75,14 +82,17 @@ struct AttachmentTileView: View {
                     .strokeBorder(AppColor.Separator.subtle, lineWidth: 1)
             }
             .transition(.opacity.combined(with: .scale(scale: 0.97)))
-        return Group {
-            if let onTapImage {
-                Button { onTapImage(attachment) } label: { tile }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("View image")
-            } else {
-                tile
-            }
+        if let onTapImage {
+            Button { onTapImage(attachment) } label: { tile }
+                .buttonStyle(.plain)
+                .accessibilityLabel("View image")
+                .background {
+                    if let onFrameChange {
+                        WindowFrameReader(onFrameChange: onFrameChange)
+                    }
+                }
+        } else {
+            tile
         }
     }
 
