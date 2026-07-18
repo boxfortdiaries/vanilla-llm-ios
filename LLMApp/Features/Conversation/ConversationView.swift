@@ -46,10 +46,10 @@ struct ConversationView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let suggestions: [(icon: String, text: String)] = [
-        ("lightbulb", "Explain a complex topic simply"),
-        ("doc.text", "Summarize a long document"),
-        ("chevron.left.forwardslash.chevron.right", "Help me debug some code"),
-        ("pencil", "Help me write an email"),
+        ("lightbulb", "Explain a topic"),
+        ("doc.text", "Summarize a document"),
+        ("pencil", "Write an email"),
+        ("chevron.left.forwardslash.chevron.right", "Debug code"),
     ]
 
     private var actions: MessageActions {

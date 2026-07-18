@@ -197,7 +197,21 @@ struct ConversationList: View {
         scrollController.isSystemOwned = true
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(50))
-            scrollController.scrollToCanonical(animated: animated)
+            // `animated: false` only ever comes from `.onAppear` (opening an
+            // existing conversation) — the one caller here with no freshness
+            // hazard (per Dan 2026-07-18: this was landing the same way the
+            // Live Boundary/"go to bottom" did before that fix, cutting a
+            // completed reply off behind the header — same root cause,
+            // reached through a third path). `scrollToLive`, not
+            // `scrollToCanonical`, for exactly the same reason those two got
+            // switched: nothing was just inserted here, every row —
+            // including the pinned one — is already fully laid out on
+            // mount, so `pinnedMessageMinY` is trustworthy from the start.
+            if animated {
+                scrollController.scrollToCanonical(animated: true)
+            } else {
+                scrollController.scrollToLive(animated: false)
+            }
         }
     }
 }

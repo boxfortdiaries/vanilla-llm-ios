@@ -543,6 +543,11 @@ struct PromptComposer: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 11)
             .frame(minHeight: 44)
+            // Without this, `.buttonStyle(.plain)` only hit-tests where the
+            // "Ask…" text itself renders, not the Spacer's empty space next
+            // to it — so tapping anywhere else in the field did nothing
+            // (per Dan 2026-07-18).
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .glassEffect(.regular, in: .rect(cornerRadius: 22))
