@@ -41,6 +41,10 @@ struct AssistantBubble: View {
                     // — see `AttachmentTray`'s own doc comments (per Dan
                     // 2026-07-17).
                     edgeCropInset: AppSpacing.lg,
+                    // See `AttachmentTray.availableWidth`'s doc comment — this
+                    // row is hosted inside `MessageScrollHost`, where its own
+                    // GeometryReader can't be trusted.
+                    availableWidth: UIScreen.main.bounds.width - AppSpacing.lg * 2,
                     onTapImage: { previewedAttachment = $0 },
                     simulateGenerating: true
                 )

@@ -35,6 +35,20 @@ struct AttachmentTray: View {
     /// the edge. 0 is correct for the composer, which has no such margin to
     /// claim.
     var edgeCropInset: CGFloat = 0
+    /// The width to compare `naturalContentWidth` against when deciding fit
+    /// vs. overflow. nil (default, the composer's usage) measures it at
+    /// runtime via `GeometryReader`. Callers hosted inside `MessageScrollHost`
+    /// (a `LazyVStack` row inside a `UIHostingController` inside a raw
+    /// `UIScrollView` with a non-zero `contentInset`) MUST pass this
+    /// explicitly instead — confirmed via `lldb`'s `recursiveDescription`
+    /// that this `GeometryReader` genuinely desyncs from where its content
+    /// actually paints in that specific hosting context (the row's real
+    /// `CALayer` frame sat ~150pt — coincidentally close to `topInset` — away
+    /// from what every other measurement, including the position-reporting
+    /// `GeometryReader` one level up, agreed was correct). The available
+    /// width there isn't something that needs runtime measurement anyway —
+    /// it's the screen width minus fixed content margins, known up front.
+    var availableWidth: CGFloat? = nil
     /// Forwarded to each `AttachmentTileView` — see its own doc comment.
     var onTapImage: ((Attachment) -> Void)? = nil
     /// Forwarded to each `AttachmentTileView` — see its own doc comment.
@@ -67,29 +81,40 @@ struct AttachmentTray: View {
         return tileWidths.reduce(0, +) + CGFloat(attachments.count - 1) * tileSpacing
     }
 
-    var body: some View {
-        GeometryReader { geometry in
-            if naturalContentWidth > geometry.size.width {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    tileRow
-                        // Leading only, not trailing — tile 1 should rest
-                        // aligned with the surrounding text's own margin
-                        // (per Dan 2026-07-17), while the trailing side
-                        // stays free to scroll all the way to the bled
-                        // frame's true edge (see `edgeCropInset` above).
-                        .padding(.leading, edgeCropInset)
-                        .padding(.vertical, 2)
-                }
-            } else {
-                // Fits: no scrolling needed, rest at `alignment` within the
-                // normally-proposed width — pulled back in by `edgeCropInset`
-                // to undo the outer bleed below, since a row that fits
-                // shouldn't hug the true device edge, only an overflowing
-                // one should.
+    @ViewBuilder
+    private func fitOrOverflow(availableWidth: CGFloat) -> some View {
+        if naturalContentWidth > availableWidth {
+            ScrollView(.horizontal, showsIndicators: false) {
                 tileRow
-                    .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
+                    // Leading only, not trailing — tile 1 should rest
+                    // aligned with the surrounding text's own margin
+                    // (per Dan 2026-07-17), while the trailing side
+                    // stays free to scroll all the way to the bled
+                    // frame's true edge (see `edgeCropInset` above).
+                    .padding(.leading, edgeCropInset)
                     .padding(.vertical, 2)
-                    .padding(.horizontal, edgeCropInset)
+            }
+        } else {
+            // Fits: no scrolling needed, rest at `alignment` within the
+            // normally-proposed width — pulled back in by `edgeCropInset`
+            // to undo the outer bleed below, since a row that fits
+            // shouldn't hug the true device edge, only an overflowing
+            // one should.
+            tileRow
+                .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
+                .padding(.vertical, 2)
+                .padding(.horizontal, edgeCropInset)
+        }
+    }
+
+    var body: some View {
+        Group {
+            if let availableWidth {
+                fitOrOverflow(availableWidth: availableWidth)
+            } else {
+                GeometryReader { geometry in
+                    fitOrOverflow(availableWidth: geometry.size.width)
+                }
             }
         }
         // Applied once, unconditionally, rather than only inside the

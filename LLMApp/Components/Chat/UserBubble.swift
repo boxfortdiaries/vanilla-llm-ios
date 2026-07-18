@@ -19,7 +19,11 @@ struct UserBubble: View {
                 // normal margin, same as the text bubble below.
                 AttachmentTray(
                     attachments: message.attachments, tileSize: 112, corner: AppRadius.medium,
-                    staggerOnAppear: true, alignment: .trailing, edgeCropInset: AppSpacing.lg
+                    staggerOnAppear: true, alignment: .trailing, edgeCropInset: AppSpacing.lg,
+                    // See `AttachmentTray.availableWidth`'s doc comment — this
+                    // row is hosted inside `MessageScrollHost`, where its own
+                    // GeometryReader can't be trusted.
+                    availableWidth: UIScreen.main.bounds.width - AppSpacing.lg * 2
                 )
             }
             // No empty bubble on an attachments-only message.
