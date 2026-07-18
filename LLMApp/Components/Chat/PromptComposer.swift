@@ -118,36 +118,58 @@ struct PromptComposer: View {
     var body: some View {
         // Ported from the GlassDemo composer: 44pt circles/field height,
         // 12pt spacing, default (borderless) button style — not .plain.
-        GlassEffectContainer(spacing: 12) {
-            HStack(alignment: .bottom, spacing: 12) {
+        //
+        // `leadingButton` gets its own `GlassEffectContainer`, separate from
+        // the rest of the row, rather than sharing one — tapping any other
+        // footer button while the attach `Menu`'s native popup was open
+        // flickered the "+" button, and every attempt to fix that by timing
+        // our own animation around the menu's (blocking the other button's
+        // action during a cooldown, opting the button out of the ambient
+        // transaction) failed to change anything, including with the guard
+        // *confirmed* engaged (per Dan 2026-07-18 tracing). That means it
+        // isn't a live animation collision at all — logs showed the flicker
+        // happening on taps several seconds after the menu had visibly
+        // closed. The remaining explanation is that a `GlassEffectContainer`
+        // recomputes all its member shapes together, and having *ever*
+        // presented a `Menu` among them leaves that shared recompute glitchy
+        // for the container's lifetime. Giving the menu button a container
+        // of its own means sibling state changes elsewhere in the row never
+        // touch its rendering pass. Trade-off: it no longer visually merges
+        // with the field the way adjacent Liquid Glass shapes normally do
+        // when close together — worth it only if this actually fixes it.
+        HStack(alignment: .bottom, spacing: 12) {
+            GlassEffectContainer(spacing: 12) {
                 leadingButton
+            }
+            GlassEffectContainer(spacing: 12) {
+                HStack(alignment: .bottom, spacing: 12) {
+                    if isVoiceActive {
+                        voiceGhostField
+                            .glassEffectID("voiceField", in: glassNamespace)
+                    } else if isDictating {
+                        dictationField
+                            .glassEffectID("dictationField", in: glassNamespace)
+                    } else {
+                        messageField
+                    }
 
-                if isVoiceActive {
-                    voiceGhostField
-                        .glassEffectID("voiceField", in: glassNamespace)
-                } else if isDictating {
-                    dictationField
-                        .glassEffectID("dictationField", in: glassNamespace)
-                } else {
-                    messageField
-                }
+                    // Mic sits between the field and the end-call button (per
+                    // Dan) — a genuinely new fourth slot in voice mode, not a
+                    // replacement of anything that exists in text mode.
+                    if isVoiceActive {
+                        voiceMuteButton
+                    }
 
-                // Mic sits between the field and the end-call button (per
-                // Dan) — a genuinely new fourth slot in voice mode, not a
-                // replacement of anything that exists in text mode.
-                if isVoiceActive {
-                    voiceMuteButton
-                }
-
-                if isVoiceActive {
-                    voiceEndCallButton
-                } else {
-                    SendButton(
-                        isGenerating: isGenerating, canSend: canSend,
-                        onSend: { isFocused = false; onSend() },
-                        onStop: onStop,
-                        onMicTap: { isFocused = false; onMicTap() }
-                    )
+                    if isVoiceActive {
+                        voiceEndCallButton
+                    } else {
+                        SendButton(
+                            isGenerating: isGenerating, canSend: canSend,
+                            onSend: { isFocused = false; onSend() },
+                            onStop: onStop,
+                            onMicTap: { isFocused = false; onMicTap() }
+                        )
+                    }
                 }
             }
         }
