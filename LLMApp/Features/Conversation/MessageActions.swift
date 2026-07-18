@@ -2,30 +2,36 @@ import Foundation
 import UIKit
 
 /// Message-level actions from `MessageBubble`'s context menu and
-/// `MessageToolbar` (spec §9 MessageActionsMenu), grouped into one type so
-/// `ConversationView` doesn't carry six separate closure properties.
+/// `MessageActionRow` (spec §9 MessageActionsMenu), grouped into one type so
+/// `ConversationView` doesn't carry a growing list of separate closure
+/// properties.
 ///
-/// ponytail: Edit/Share/Speak/Bookmark are wired up but inert — Copy and
-/// Regenerate are the two actions core to landing the conversation UX; the
+/// ponytail: Edit/Speak/Bookmark are wired up but inert — Copy, Regenerate,
+/// and Like/Dislike are the actions core to landing the conversation UX; the
 /// rest render correctly and are tappable, but don't yet have a backing
-/// implementation. Fill in when those flows are actually needed.
+/// implementation. Fill in when those flows are actually needed. Share isn't
+/// here at all — `MessageActionRow` uses a native `ShareLink` directly
+/// instead of a closure, since sharing needs to present a system sheet, not
+/// just fire a side effect.
 @MainActor
 struct MessageActions {
-    var onCopy: (Message) -> Void
-    var onEdit: (Message) -> Void
-    var onRegenerate: (Message) -> Void
-    var onShare: (Message) -> Void
-    var onSpeak: (Message) -> Void
-    var onBookmark: (Message) -> Void
+    var onCopy: (Message) -> Void = { _ in }
+    var onEdit: (Message) -> Void = { _ in }
+    var onRegenerate: (Message) -> Void = { _ in }
+    var onSpeak: (Message) -> Void = { _ in }
+    var onBookmark: (Message) -> Void = { _ in }
+    var onLike: (Message) -> Void = { _ in }
+    var onDislike: (Message) -> Void = { _ in }
 
     static func standard(viewModel: ConversationViewModel) -> MessageActions {
         MessageActions(
             onCopy: { message in UIPasteboard.general.string = message.content },
             onEdit: { _ in },
             onRegenerate: { message in viewModel.retry(message) },
-            onShare: { _ in },
             onSpeak: { _ in },
-            onBookmark: { _ in }
+            onBookmark: { _ in },
+            onLike: { message in viewModel.setFeedback(.liked, for: message.id) },
+            onDislike: { message in viewModel.setFeedback(.disliked, for: message.id) }
         )
     }
 }

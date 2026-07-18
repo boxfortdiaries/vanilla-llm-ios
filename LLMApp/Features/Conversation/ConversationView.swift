@@ -7,10 +7,28 @@ struct ConversationView: View {
     @State private var viewModel: ConversationViewModel
     @State private var isAtBottom = true
     @State private var scrollToBottomTrigger = 0
-    /// Owned here (not in PromptComposer) so the starter prompts can drop away
-    /// when the attachment tray opens, same as when the user starts typing.
-    @State private var isAttachmentExpanded = false
-    @State private var voiceRoute: VoiceRoute?
+    /// Bottom toast (spec: MessageActionRow's copy/like icons) — owned
+    /// here, not `MessageActions`/the view model, since it's transient
+    /// presentation state with an auto-dismiss timer, not conversation
+    /// data. One shared piece of state, not one per message-action — only
+    /// ever one toast on screen at a time.
+    @State private var toastText: String?
+    @State private var toastTask: Task<Void, Never>?
+    /// Owned by `ChatCard` (above this view's own `.id(currentID)`-triggered
+    /// rebuild) so an active call survives peeking at the sidebar and only
+    /// ends on a real conversation switch — see `ChatCard`'s own doc comment
+    /// on its `voiceRoute` property for the full reasoning.
+    @Binding var voiceRoute: VoiceRoute?
+    @Binding var showCaptions: Bool
+    /// Owned here, not by `LiveVoiceConversationView` — `PromptComposer`'s
+    /// mute button needs to read/drive it too, now that the composer's
+    /// voice-mode state is *the same component* as its text-mode state, not
+    /// a separate view (per Dan 2026-07-16). Persists for this
+    /// `ConversationView`'s lifetime (i.e. per conversation, not per voice
+    /// session) — `VoiceConversationViewModel`'s own start/stop methods
+    /// already support being reused across multiple voice sessions within
+    /// one conversation.
+    @State private var voice = VoiceConversationViewModel()
     @AppStorage("selectedVoiceIdentifier") private var storedVoiceIdentifier = ""
     /// Bottom edge of the floating header (from ChatCard), so the list rests its
     /// content below it and the top fade lines up with it.
@@ -35,12 +53,48 @@ struct ConversationView: View {
     ]
 
     private var actions: MessageActions {
-        .standard(viewModel: viewModel)
+        var actions = MessageActions.standard(viewModel: viewModel)
+        let copy = actions.onCopy
+        actions.onCopy = { message in
+            copy(message)
+            presentToast("Copied")
+        }
+        let like = actions.onLike
+        actions.onLike = { message in
+            // Liking and un-liking share this same closure (tapping an
+            // already-liked message clears it — see
+            // `ConversationViewModel.setFeedback`) — only thank them on the
+            // way to `.liked`, not on the way back off it.
+            let wasLiked = message.feedback == .liked
+            like(message)
+            if !wasLiked {
+                presentToast("Thank you for your feedback!")
+            }
+        }
+        let dislike = actions.onDislike
+        actions.onDislike = { message in
+            // Fires either from a plain un-dislike toggle-off tap or from
+            // `DislikeFeedbackSheet`'s Send button (see `MessageActionRow`)
+            // — same "only thank them on the way to disliked" shape as
+            // `onLike` above, and the same toast text per Dan 2026-07-17.
+            let wasDisliked = message.feedback == .disliked
+            dislike(message)
+            if !wasDisliked {
+                presentToast("Thank you for your feedback!")
+            }
+        }
+        return actions
     }
 
-    init(conversationID: UUID, store: ConversationStore, aiService: AIService, headerHeight: CGFloat = 0, onComposerFrame: @escaping (CGRect) -> Void = { _ in }) {
+    init(
+        conversationID: UUID, store: ConversationStore, aiService: AIService, headerHeight: CGFloat = 0,
+        voiceRoute: Binding<VoiceRoute?>, showCaptions: Binding<Bool>,
+        onComposerFrame: @escaping (CGRect) -> Void = { _ in }
+    ) {
         _viewModel = State(initialValue: ConversationViewModel(conversationID: conversationID, store: store, aiService: aiService))
         self.headerHeight = headerHeight
+        _voiceRoute = voiceRoute
+        _showCaptions = showCaptions
         self.onComposerFrame = onComposerFrame
     }
 
@@ -53,109 +107,170 @@ struct ConversationView: View {
         // below the nav bar. ChatCard's AppBackground covers the nav-bar strip;
         // both are `Background.primary`, so the card reads as one surface.
         AppBackground {
-            ZStack(alignment: .bottom) {
-                if viewModel.messages.isEmpty {
-                    emptyConversation
-                } else {
-                    ConversationList(
-                        messages: viewModel.messages,
-                        isAtBottom: $isAtBottom,
-                        scrollToBottomTrigger: scrollToBottomTrigger,
-                        // headerHeight plus md: per Dan 2026-07-12, the
-                        // pinned message needed ~156pt of clearance from the
-                        // device top on this device/config, and headerHeight
-                        // alone (~138pt here) read as too tight — reverses an
-                        // earlier tuning pass that had pulled this the other
-                        // way (previously `headerHeight - md`, when the gap
-                        // read as too loose). The header bar's own size is
-                        // unchanged; only the breathing room below it grew.
-                        // The `+ 2` closes the exact residual: `headerHeight +
-                        // md` alone measured 154pt (confirmed via the pinned
-                        // scroll target's own logged numbers, not eyeballed),
-                        // 2pt short of the intended 156 — coincidental to
-                        // which spacing token was available, not a
-                        // deliberate choice, so it gets its own explicit term
-                        // rather than silently folding into `md`.
-                        topInset: headerHeight + AppSpacing.md + 2,
-                        // xl (not lg, like the header): pulled up a bit further
-                        // per Dan 2026-07 — the header's own gap read as too
-                        // tight once mirrored at the bottom.
-                        bottomInset: composerHeight + AppSpacing.xl
-                    )
-                    // Dissolve the conversation into the background at the top
-                    // (under the header) and bottom (above the composer) instead
-                    // of hard edges — same fade technique as the profile sheet.
-                    .mask(conversationFade)
-                    // Extend the masked list to the true device bottom (behind the
-                    // composer, which insets this view's safe area). Outermost so the
-                    // mask is sized full-screen too — its bottom gradient lands at the
-                    // screen edge and the conversation dissolves behind the composer,
-                    // rather than being clipped at the composer's top edge.
-                    .ignoresSafeArea(.container, edges: .bottom)
-                }
+            // Voice mode is conditional *content* in this same slot, not a
+            // modal cover — see `ChatCard`'s `voiceRoute` doc comment for why
+            // (it needs to slide with the drawer and survive peeking at the
+            // sidebar, which a `.fullScreenCover` structurally can't do).
+            if let voiceRoute {
+                voiceContent(for: voiceRoute)
+                    .transition(.opacity)
+            } else {
+                mainContent
+                    .transition(.opacity)
+            }
+        }
+        // .slow (not .standard) — the chat/voice swap read as too abrupt at
+        // the standard spring's speed; the extra bit of ease reads calmer for
+        // a mode switch this size (per Dan 2026-07).
+        .animation(AppAnimation.resolve(AppAnimation.slow, reduceMotion: reduceMotion), value: voiceRoute)
+        .toolbar(.hidden, for: .navigationBar)
+        // The composer is unconditional — present for both text mode and
+        // live voice mode (as its own voice-active state, see
+        // `PromptComposer.isVoiceActive`), hidden only for `.picker`, which
+        // is its own self-contained screen with its own CTA. Living outside
+        // the `if let voiceRoute` branch above (rather than duplicated
+        // inside both `mainContent` and the `.live` case) is what makes it
+        // *one* `PromptComposer` instance whose state changes, not two
+        // separate views swapping — the whole point of this being a real
+        // Liquid Glass morph instead of a hard cut.
+        .safeAreaInset(edge: .bottom) {
+            if voiceRoute?.isLive ?? true {
+                composer
+            }
+        }
+    }
 
-                if !isAtBottom {
-                    Button {
-                        scrollToBottomTrigger += 1
-                    } label: {
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(AppColor.Tint.cta)
-                            .frame(width: 36, height: 36)
-                    }
-                    .glassEffect(.regular.interactive(), in: .circle)
-                    .accessibilityLabel("New messages")
+    private var mainContent: some View {
+        ZStack(alignment: .bottom) {
+            if viewModel.messages.isEmpty {
+                emptyConversation
+            } else {
+                ConversationList(
+                    messages: viewModel.messages,
+                    actions: actions,
+                    isAtBottom: $isAtBottom,
+                    scrollToBottomTrigger: scrollToBottomTrigger,
+                    // headerHeight plus md: per Dan 2026-07-12, the
+                    // pinned message needed ~156pt of clearance from the
+                    // device top on this device/config, and headerHeight
+                    // alone (~138pt here) read as too tight — reverses an
+                    // earlier tuning pass that had pulled this the other
+                    // way (previously `headerHeight - md`, when the gap
+                    // read as too loose). The header bar's own size is
+                    // unchanged; only the breathing room below it grew.
+                    // The `+ 2` closes the exact residual: `headerHeight +
+                    // md` alone measured 154pt (confirmed via the pinned
+                    // scroll target's own logged numbers, not eyeballed),
+                    // 2pt short of the intended 156 — coincidental to
+                    // which spacing token was available, not a
+                    // deliberate choice, so it gets its own explicit term
+                    // rather than silently folding into `md`.
+                    topInset: headerHeight + AppSpacing.md + 2,
+                    // xl (not lg, like the header): pulled up a bit further
+                    // per Dan 2026-07 — the header's own gap read as too
+                    // tight once mirrored at the bottom.
+                    bottomInset: composerHeight + AppSpacing.xl
+                )
+                // Dissolve the conversation into the background at the top
+                // (under the header) and bottom (above the composer) instead
+                // of hard edges — same fade technique as the profile sheet.
+                .mask(conversationFade)
+                // Extend the masked list to the true device bottom (behind the
+                // composer, which insets this view's safe area). Outermost so the
+                // mask is sized full-screen too — its bottom gradient lands at the
+                // screen edge and the conversation dissolves behind the composer,
+                // rather than being clipped at the composer's top edge.
+                .ignoresSafeArea(.container, edges: .bottom)
+            }
+
+            if !isAtBottom {
+                Button {
+                    scrollToBottomTrigger += 1
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(AppColor.Tint.cta)
+                        .frame(width: 36, height: 36)
+                }
+                .glassEffect(.regular.interactive(), in: .circle)
+                .accessibilityLabel("New messages")
+                .padding(.bottom, AppSpacing.sm)
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8)))
+            }
+
+            if let toastText {
+                Text(toastText)
+                    .font(AppFont.subheadline)
+                    .foregroundStyle(AppColor.Text.primary)
+                    .padding(.horizontal, AppSpacing.lg)
+                    .padding(.vertical, AppSpacing.sm)
+                    .glassEffect(.regular, in: .capsule)
                     .padding(.bottom, AppSpacing.sm)
                     .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8)))
-                }
+                    .accessibilityAddTraits(.updatesFrequently)
             }
         }
-        .toolbar(.hidden, for: .navigationBar)
+        // Scoped here (not on `body`) — this used to sit on the outer
+        // `AppBackground`, right above the mainContent/voiceContent `if/else`
+        // swap, where it silently became the *nearest explicit animation* for
+        // that whole swap and force-overrode it to this fast spring — instead
+        // of whatever duration `withAnimation` actually passed at the call
+        // site. That's why entering voice mode looked like the content
+        // (including the starter suggestions) snapped away almost instantly
+        // while the composer's glass morph kept animating normally (per Dan
+        // 2026-07).
         .animation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion), value: isAtBottom)
-        .safeAreaInset(edge: .bottom) {
-            PromptComposer(
-                text: $viewModel.composerText,
-                attachments: viewModel.attachments,
-                isGenerating: viewModel.generationState == .generating,
-                isAttachmentExpanded: $isAttachmentExpanded,
-                onSend: handleSend,
-                onStop: viewModel.stop,
-                onAddAttachment: { viewModel.attachments.append($0) },
-                onRemoveAttachment: { attachment in
-                    viewModel.attachments.removeAll { $0.id == attachment.id }
-                },
-                onMicTap: handleMicTap
-            )
-            // Report the composer's screen frame up so the drawer's open-drag can
-            // skip drags that start here (letting the attachment tray scroll).
-            .background {
-                GeometryReader { proxy in
-                    Color.clear.onChange(of: proxy.frame(in: .global), initial: true) { _, frame in
-                        onComposerFrame(frame)
-                        composerHeight = frame.height
-                    }
+    }
+
+    private var composer: some View {
+        PromptComposer(
+            text: $viewModel.composerText,
+            attachments: viewModel.attachments,
+            isGenerating: viewModel.generationState == .generating,
+            onSend: handleSend,
+            onStop: viewModel.stop,
+            onAddAttachment: { viewModel.attachments.append($0) },
+            onRemoveAttachment: { attachment in
+                viewModel.attachments.removeAll { $0.id == attachment.id }
+            },
+            onMicTap: handleMicTap,
+            isVoiceActive: voiceRoute?.isLive ?? false,
+            isVoiceMuted: voice.isMuted,
+            onToggleVoiceMute: { voice.isMuted.toggle() },
+            onExitVoice: { setVoiceRoute(nil) },
+            onEndVoice: { setVoiceRoute(nil) }
+        )
+        // Report the composer's screen frame up so the drawer's open-drag can
+        // skip drags that start here (letting the attachment tray scroll).
+        .background {
+            GeometryReader { proxy in
+                Color.clear.onChange(of: proxy.frame(in: .global), initial: true) { _, frame in
+                    onComposerFrame(frame)
+                    composerHeight = frame.height
                 }
             }
         }
-        .fullScreenCover(item: $voiceRoute) { route in
-            switch route {
-            case .picker:
-                VoicePickerView(
-                    voices: VoiceOption.availableVoices(),
-                    onStart: { voice in
-                        storedVoiceIdentifier = voice.voiceIdentifier
-                        voiceRoute = .live(voice)
-                    },
-                    onCancel: { voiceRoute = nil }
-                )
-            case .live(let voiceOption):
-                LiveVoiceConversationView(
-                    conversationViewModel: viewModel,
-                    selectedVoice: voiceOption,
-                    onChangeVoice: { voiceRoute = .picker },
-                    onClose: { voiceRoute = nil }
-                )
-            }
+    }
+
+    @ViewBuilder
+    private func voiceContent(for route: VoiceRoute) -> some View {
+        switch route {
+        case .picker:
+            VoicePickerView(
+                voices: VoiceOption.availableVoices(),
+                onStart: { voiceOption in
+                    storedVoiceIdentifier = voiceOption.voiceIdentifier
+                    setVoiceRoute(.live(voiceOption))
+                },
+                onCancel: { setVoiceRoute(nil) }
+            )
+        case .live(let voiceOption):
+            LiveVoiceConversationView(
+                conversationViewModel: viewModel,
+                selectedVoice: voiceOption,
+                showCaptions: $showCaptions,
+                voice: voice
+            )
         }
     }
 
@@ -164,9 +279,40 @@ struct ConversationView: View {
     private func handleMicTap() {
         let voices = VoiceOption.availableVoices()
         if let remembered = voices.first(where: { $0.voiceIdentifier == storedVoiceIdentifier }) {
-            voiceRoute = .live(remembered)
+            setVoiceRoute(.live(remembered))
         } else {
-            voiceRoute = .picker
+            setVoiceRoute(.picker)
+        }
+    }
+
+    /// Every `voiceRoute` mutation goes through here so the composer's
+    /// Liquid Glass morph (attach → mute/ghost-field/end-call, see
+    /// `PromptComposer.isVoiceActive`) and the middle-content swap both
+    /// animate consistently — per Dan 2026-07-16, the un-animated version
+    /// read as an abrupt cut rather than a spring/morph. Same token
+    /// `ChatCard`'s own conversation-switch dismiss already uses, for one
+    /// consistent motion language across every way voice mode starts/ends.
+    private func setVoiceRoute(_ route: VoiceRoute?) {
+        withAnimation(AppAnimation.resolve(AppAnimation.slow, reduceMotion: reduceMotion)) {
+            voiceRoute = route
+        }
+    }
+
+    /// Cancels any pending auto-dismiss and restarts it — a rapid second
+    /// toast (copy again, or copy then like) re-shows for a fresh interval
+    /// instead of letting an in-flight dismiss from the first cut the
+    /// second one short.
+    private func presentToast(_ text: String) {
+        toastTask?.cancel()
+        withAnimation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion)) {
+            toastText = text
+        }
+        toastTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            withAnimation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion)) {
+                toastText = nil
+            }
         }
     }
 
@@ -176,11 +322,12 @@ struct ConversationView: View {
     private func handleSend() {
         // Hold the reply until the push-up scroll + rise have fully settled, so it
         // can't start mid-scroll and jerk the message. A first message has no
-        // push-up, so it needs less.
-        let settle: Duration = .milliseconds(viewModel.messages.isEmpty ? 340 : 620)
-        // Kept in sync with ConversationList's pin-scroll spring (0.42/0.97) —
-        // see its comment for why 0.97, not the earlier 0.94.
-        withAnimation(AppAnimation.resolve(.spring(response: 0.42, dampingFraction: 0.97), reduceMotion: reduceMotion)) {
+        // push-up, so it needs less. Scaled up proportionally with the spring's
+        // own response below (per Dan 2026-07-17: 0.55s still read as "pretty
+        // fast" — 0.72s is another 30% past that) — keeps the same settle-time
+        // buffer past the spring's own duration.
+        let settle: Duration = .milliseconds(viewModel.messages.isEmpty ? 585 : 1065)
+        withAnimation(AppAnimation.resolve(.spring(response: 0.72, dampingFraction: 0.97), reduceMotion: reduceMotion)) {
             _ = viewModel.send()
         }
         Task { @MainActor in
@@ -207,10 +354,9 @@ struct ConversationView: View {
         }
     }
 
-    /// Starter prompts show on a blank slate — but not once the user is typing
-    /// or has opened the attachment tray (which takes over the composer row).
+    /// Starter prompts show on a blank slate — but not once the user starts typing.
     private var showSuggestions: Bool {
-        viewModel.composerText.isEmpty && !isAttachmentExpanded
+        viewModel.composerText.isEmpty
     }
 
     private var emptyConversation: some View {
@@ -229,10 +375,10 @@ struct ConversationView: View {
                             // Same animation as the list's own fade-out below —
                             // otherwise the composer's height change (from
                             // wrapping to a second line) snaps instantly while
-                            // the fade eases over 0.35s, and the two racing on
-                            // different clocks is what read as the rows
-                            // repositioning inconsistently (per Dan 2026-07).
-                            withAnimation(AppAnimation.resolve(.easeInOut(duration: 0.35), reduceMotion: reduceMotion)) {
+                            // the fade eases over a different curve, and the two
+                            // racing on different clocks is what read as the
+                            // rows repositioning inconsistently (per Dan 2026-07).
+                            withAnimation(AppAnimation.resolve(AppAnimation.slow, reduceMotion: reduceMotion)) {
                                 viewModel.composerText = suggestion.text
                             }
                         } label: {
@@ -258,17 +404,27 @@ struct ConversationView: View {
                 .padding(.horizontal, AppSpacing.xl)
                 .padding(.bottom, AppSpacing.xs)
                 .transition(.opacity)
+                // Same .slow token as the voice-mode swap, for one consistent
+                // motion language across every way these rows leave — tapping
+                // the field to type, opening the attachment tray, or entering
+                // voice mode. Scoped to just this row group, not the outer
+                // emptyConversation container — otherwise it also becomes the
+                // governing animation when the whole view exits for an
+                // unrelated reason (e.g. entering voice mode), making the rows
+                // fade out on their own clock instead of matching that
+                // transition's actual duration (per Dan 2026-07).
+                .animation(AppAnimation.resolve(AppAnimation.slow, reduceMotion: reduceMotion), value: showSuggestions)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        // Gentle, slightly slower fade for the starter prompts (easeInOut reads
-        // softer than the spring token for a pure opacity change).
-        .animation(AppAnimation.resolve(.easeInOut(duration: 0.35), reduceMotion: reduceMotion), value: showSuggestions)
     }
 }
 
-/// Which full-screen voice surface is presented, if any.
-private enum VoiceRoute: Identifiable {
+/// Which voice surface is showing in place of the normal chat content, if
+/// any — owned by `ChatCard`, not this view, so it survives a conversation
+/// switch long enough to animate away gracefully (see `ChatCard`'s
+/// `voiceRoute` doc comment).
+enum VoiceRoute: Identifiable, Equatable {
     case picker
     case live(VoiceOption)
 
@@ -278,6 +434,15 @@ private enum VoiceRoute: Identifiable {
         case .live(let voice): "live-\(voice.id)"
         }
     }
+
+    /// The composer's voice-active state only applies to `.live` — `.picker`
+    /// is its own self-contained screen with its own "Start Voice" CTA, so
+    /// the composer stays hidden entirely rather than showing redundantly
+    /// alongside it.
+    var isLive: Bool {
+        if case .live = self { return true }
+        return false
+    }
 }
 
 #Preview("Light") {
@@ -285,7 +450,9 @@ private enum VoiceRoute: Identifiable {
         ConversationView(
             conversationID: SampleData.conversations[0].id,
             store: ConversationStore(),
-            aiService: MockAIService()
+            aiService: MockAIService(),
+            voiceRoute: .constant(nil),
+            showCaptions: .constant(false)
         )
     }
     .environment(NavigationCoordinator(router: Router(), store: ConversationStore(), initialConversationID: SampleData.conversations[0].id))
@@ -296,7 +463,9 @@ private enum VoiceRoute: Identifiable {
         ConversationView(
             conversationID: SampleData.conversations[0].id,
             store: ConversationStore(),
-            aiService: MockAIService()
+            aiService: MockAIService(),
+            voiceRoute: .constant(nil),
+            showCaptions: .constant(false)
         )
     }
     .environment(NavigationCoordinator(router: Router(), store: ConversationStore(), initialConversationID: SampleData.conversations[0].id))
@@ -308,7 +477,9 @@ private enum VoiceRoute: Identifiable {
         ConversationView(
             conversationID: SampleData.conversations[2].id,
             store: ConversationStore(),
-            aiService: MockAIService()
+            aiService: MockAIService(),
+            voiceRoute: .constant(nil),
+            showCaptions: .constant(false)
         )
     }
     .environment(NavigationCoordinator(router: Router(), store: ConversationStore(), initialConversationID: SampleData.conversations[2].id))

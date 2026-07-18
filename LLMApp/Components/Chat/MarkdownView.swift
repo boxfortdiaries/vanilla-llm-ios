@@ -16,6 +16,12 @@ struct MarkdownView: View {
     /// StreamingMessage). Off for messages loaded already-complete from
     /// history, which render fully visible immediately with no animation.
     var animateReveal: Bool = false
+    /// Fires once every block has finished its own sweep (or immediately, if
+    /// not animating at all) — lets a caller like `AssistantBubble` wait for
+    /// the reply to actually be done *appearing*, not just done arriving
+    /// (per Dan 2026-07-17: the message action row was showing up mid-cascade,
+    /// before the text itself had finished revealing).
+    var onRevealComplete: () -> Void = {}
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var revealed = false
@@ -24,8 +30,15 @@ struct MarkdownView: View {
     // Each block's own sweep takes this long; the next block starts this much
     // after the previous one — shorter than the duration, so adjacent blocks'
     // sweeps overlap and read as one continuous cascade, not a relay.
-    private static let blockDuration: Double = 1.1
-    private static let blockStagger: Double = 0.42
+    // Shortened from 1.1/0.42 (per Dan 2026-07-17: the wait between the reply
+    // finishing and the action row appearing — gated on this cascade fully
+    // playing out — felt long, especially for multi-block replies where the
+    // stagger stacks up).
+    // Not private — AssistantBubble reuses this so the user-controls row
+    // fades in with the exact same curve/duration as the reply's own blocks
+    // (per Dan 2026-07-17: "same cross fade effect... consistent").
+    static let blockDuration: Double = 0.6
+    private static let blockStagger: Double = 0.22
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppSpacing.sm) {
@@ -61,8 +74,21 @@ struct MarkdownView: View {
             }
         }
         .onAppear {
-            guard revealing else { return }
+            guard revealing else {
+                onRevealComplete()
+                return
+            }
             revealed = true
+            // Same formula the per-block `.delay` above uses — the last
+            // block starts at `(count-1) * blockStagger` and takes
+            // `blockDuration` to finish its own sweep.
+            let blockCount = Self.parseBlocks(content).count
+            let totalDuration = Double(max(blockCount - 1, 0)) * Self.blockStagger + Self.blockDuration
+            Task {
+                try? await Task.sleep(for: .seconds(totalDuration))
+                guard !Task.isCancelled else { return }
+                onRevealComplete()
+            }
         }
     }
 

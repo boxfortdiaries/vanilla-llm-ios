@@ -8,6 +8,7 @@ struct Message: Identifiable, Equatable {
     var timestamp: Date
     var attachments: [Attachment]
     var status: MessageStatus
+    var feedback: MessageFeedback
 
     init(
         id: UUID = UUID(),
@@ -15,7 +16,8 @@ struct Message: Identifiable, Equatable {
         content: String,
         timestamp: Date = .now,
         attachments: [Attachment] = [],
-        status: MessageStatus = .complete
+        status: MessageStatus = .complete,
+        feedback: MessageFeedback = .none
     ) {
         self.id = id
         self.role = role
@@ -23,6 +25,7 @@ struct Message: Identifiable, Equatable {
         self.timestamp = timestamp
         self.attachments = attachments
         self.status = status
+        self.feedback = feedback
     }
 }
 
@@ -30,6 +33,14 @@ enum MessageRole: Equatable {
     case user
     case assistant
     case system
+}
+
+/// User's like/dislike on an assistant reply (per Dan 2026-07-17) — mutually
+/// exclusive, `.none` is the default/cleared state.
+enum MessageFeedback: Equatable {
+    case none
+    case liked
+    case disliked
 }
 
 /// Message lifecycle (spec Appendix E). `retrying` is distinct from `failed`

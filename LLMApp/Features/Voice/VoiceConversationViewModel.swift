@@ -27,8 +27,11 @@ enum VoiceConversationState: Equatable {
 @MainActor
 final class VoiceConversationViewModel: NSObject {
     private(set) var state: VoiceConversationState = .requestingPermission
-    /// Rolling window of mic amplitude samples (0...1) for the waveform.
-    private(set) var levels: [Double] = Array(repeating: 0.1, count: 24)
+    /// Rolling window of mic amplitude samples (0...1) for the waveform. Sized
+    /// per instance — the live voice screen wants a small iconic cluster, the
+    /// composer's inline dictation field wants enough to fill its width edge
+    /// to edge (per Dan 2026-07-16).
+    private(set) var levels: [Double]
     private(set) var liveTranscript = ""
     var isMuted = false { didSet { if isMuted { stopListening() } else if state != .speaking { startListening() } } }
 
@@ -46,7 +49,8 @@ final class VoiceConversationViewModel: NSObject {
     private let synthesizer = AVSpeechSynthesizer()
     private var speakingPulseTimer: Timer?
 
-    override init() {
+    init(levelCount: Int = 9) {
+        levels = Array(repeating: 0.1, count: levelCount)
         super.init()
         synthesizer.delegate = self
     }
@@ -187,7 +191,12 @@ final class VoiceConversationViewModel: NSObject {
         }
     }
 
-    private func finishListening() {
+    /// Stops listening and delivers whatever was heard via `onFinalTranscript`
+    /// — the natural end-of-utterance path (silence detection below calls this
+    /// automatically), but also public so a manual "stop" control (the
+    /// composer's inline dictation button) can trigger the same finalize step
+    /// on demand instead of only on a timeout.
+    func finishListening() {
         let transcript = liveTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         stopListening()
         guard !transcript.isEmpty else { return }
@@ -247,6 +256,21 @@ final class VoiceConversationViewModel: NSObject {
 
     func stopSpeaking() {
         synthesizer.stopSpeaking(at: .immediate)
+    }
+
+    /// Called when the assistant's reply failed to generate — without this,
+    /// nothing ever moves `state` out of `.thinking` (the caller only speaks
+    /// on `.complete`), leaving the UI stuck. Mirrors the recovery shape of
+    /// `speechSynthesizer(_:didFinish:)`: show the problem briefly, then
+    /// resume listening on its own rather than requiring the user to
+    /// manually back out and retry.
+    func reportGenerationFailure() {
+        state = .error("Something went wrong. Try again?")
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            guard !isMuted else { return }
+            startListening()
+        }
     }
 
     func teardown() {

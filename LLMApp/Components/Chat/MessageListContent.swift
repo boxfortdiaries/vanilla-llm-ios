@@ -25,6 +25,7 @@ import SwiftUI
 /// `didSet` for why).
 struct MessageListContent: View {
     var messages: [Message]
+    var actions: MessageActions = MessageActions()
     /// Sized by the view controller (needs `viewportHeight`/insets that live
     /// there) and fed down here as plain input — see `ConversationList`'s
     /// original `reserveHeight` doc comment for why this exists at all.
@@ -60,7 +61,7 @@ struct MessageListContent: View {
             Color.clear.frame(height: AppSpacing.xxl)
             LazyVStack(spacing: AppSpacing.lg) {
                 ForEach(messages) { message in
-                    MessageBubble(message: message)
+                    MessageBubble(message: message, actions: actions)
                         .id(message.id)
                         .transition(.asymmetric(insertion: messageInsertion, removal: .opacity))
                         .background {

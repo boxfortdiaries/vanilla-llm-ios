@@ -6,6 +6,7 @@ import SwiftUI
 /// canvas, so this sits between the two).
 struct UserBubble: View {
     var message: Message
+    var actions: MessageActions = MessageActions()
 
     var body: some View {
         VStack(alignment: .trailing, spacing: AppSpacing.xs) {
@@ -31,6 +32,7 @@ struct UserBubble: View {
                     .background(AppColor.Surface.bubble, in: .rect(cornerRadius: AppRadius.medium))
                     // Indent only the text bubble; the attachment row stays full-width.
                     .padding(.leading, 40)
+                    .messageTextContextMenu(message: message, actions: actions, includeRegenerate: false)
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)

@@ -56,6 +56,10 @@ final class MockAIService: AIService {
     private static func response(for message: String) -> String {
         let lowercased = message.lowercased()
 
+        if DemoImageAttachments.isImageRequest(message) {
+            return "Here are a few options. Let me know if you'd like a different style — realistic, illustrated, or something else."
+        }
+
         // A long, multi-screen reply — used by `ScrollBugUITests`'
         // large-residual-gate tests (2026-07-16) to exercise a reply that
         // outgrows a single screen, same role as "code"/"table" below.

@@ -36,6 +36,7 @@ final class MessageScrollController {
 /// replumbed by hand.
 struct MessageScrollHost: UIViewControllerRepresentable {
     var messages: [Message]
+    var actions: MessageActions = MessageActions()
     var topInset: CGFloat
     var bottomInset: CGFloat
     var controller: MessageScrollController
@@ -51,6 +52,12 @@ struct MessageScrollHost: UIViewControllerRepresentable {
     func updateUIViewController(_ vc: MessageScrollViewController, context: Context) {
         vc.onAtBottomChange = onAtBottomChange
         vc.onUserScrolledAway = onUserScrolledAway
+        // No didSet/equality dance needed like `messages` below — closures
+        // aren't Equatable, but they're also cheap to just always reassign;
+        // whatever refresh `messages`' own guard triggers will pick up the
+        // latest value here since `currentContent` reads `self.actions` at
+        // construction time.
+        vc.actions = actions
         // ponytail: contentInset changes (topInset/bottomInset — e.g.
         // composer height changing when the attachment tray opens) apply
         // instantly, not animated: `withAnimation` doesn't reach into a raw
@@ -82,6 +89,7 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
 
     var onAtBottomChange: (Bool) -> Void = { _ in }
     var onUserScrolledAway: () -> Void = {}
+    var actions: MessageActions = MessageActions()
     /// See `MessageScrollController.isSystemOwned` — gates whether a
     /// rotation/size-class change is allowed to re-assert the canonical
     /// scroll position.
@@ -149,6 +157,7 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
     private var currentContent: MessageListContent {
         MessageListContent(
             messages: messages,
+            actions: actions,
             reserveHeight: reserveHeight,
             onPinnedHeightChange: { [weak self] h in
                 // 2026-07-13: an *exact* equality guard here caused a real
@@ -419,14 +428,20 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
             return
         }
         chaseAttempts = 0
-        animateChase(to: target.y, duration: 0.28)
+        // 0.35s (down from 0.55s — still too slow, per Dan 2026-07-17).
+        animateChase(to: target.y, duration: 0.35)
     }
 
     /// See `scrollToCanonical`'s doc comment for the "chase, don't correct
     /// after" reasoning and the 2026-07-13/2026-07-16 history behind it.
     private let largeResidualThreshold: CGFloat = 300
     private let maxChaseAttempts = 6
-    private let chaseCheckInterval: TimeInterval = 0.09
+    // Scaled proportionally with the primary duration above (ratio
+    // preserved from 0.09/0.28) — this is how often the chase re-checks
+    // whether the target moved, relative to how long each eased segment
+    // takes; changing the primary duration alone without this would have
+    // it re-check much earlier into each (now longer) segment than tuned.
+    private let chaseCheckInterval: TimeInterval = 0.11
     private var chaseAttempts = 0
 
     private func animateChase(to targetY: CGFloat, duration: TimeInterval) {

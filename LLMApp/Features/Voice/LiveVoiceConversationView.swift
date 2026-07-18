@@ -1,46 +1,63 @@
 import SwiftUI
+import UIKit
 
-/// Meta AI-style full-screen live voice overlay. Owns its own
+/// Meta AI-style live voice content — swapped in by `ConversationView` in
+/// place of the normal message list + composer (not a modal cover; see
+/// `ChatCard`'s `voiceRoute` doc comment for why). Owns its own
 /// `VoiceConversationViewModel` (mic/STT/TTS plumbing) but sends every
 /// transcript through the same `ConversationViewModel.send()`/`respond()`
 /// path the text composer uses — voice is an input/output skin on the
 /// existing chat pipeline, not a second backend route.
+///
+/// No top bar and no bottom composer of its own — `ChatCard`'s persistent
+/// `GlassNavigationBar` (trailing menu swapped to voice options while this is
+/// showing) is the one real header, and `ConversationView`'s `PromptComposer`
+/// (also swapped into its voice-mode state) is the one real composer, both
+/// unconditionally present whether this view is showing or not. This view is
+/// just the middle content — waveform, status, captions.
+///
+/// `voice` (the mic/STT/TTS view model) is owned by `ConversationView`, not
+/// here, since `PromptComposer`'s mute button needs to read/drive it too —
+/// see `ConversationView`'s own `voice` property for why.
 struct LiveVoiceConversationView: View {
     @Bindable var conversationViewModel: ConversationViewModel
     let selectedVoice: VoiceOption
-    var onChangeVoice: () -> Void
-    var onClose: () -> Void
+    @Binding var showCaptions: Bool
+    var voice: VoiceConversationViewModel
 
-    @State private var voice = VoiceConversationViewModel()
-    @State private var showCaptions = true
     @State private var lastSpokenMessageID: UUID?
-    @State private var startDate = Date()
+    @State private var startTask: Task<Void, Never>?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        AppBackground {
-            VStack(spacing: 0) {
-                topBar
+        VStack(spacing: AppSpacing.xl) {
+            WaveformView(levels: voice.levels)
 
-                Spacer(minLength: 0)
+            if !statusLabel.isEmpty {
+                Text(statusLabel)
+                    .font(AppFont.subheadline)
+                    .foregroundStyle(AppColor.Text.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, AppSpacing.xl)
+            }
 
-                VStack(spacing: AppSpacing.xl) {
-                    WaveformView(levels: voice.levels, tint: selectedVoice.gradient.first ?? AppColor.Tint.cta)
-
-                    Text(statusLabel)
-                        .font(AppFont.subheadline)
-                        .foregroundStyle(AppColor.Text.secondary)
-
-                    if showCaptions {
-                        captions
-                    }
+            if voice.state == .denied {
+                Button("Open Settings") {
+                    guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                    UIApplication.shared.open(url)
                 }
+                .font(AppFont.subheadline.bold())
+                .foregroundStyle(AppColor.Text.inverse)
+                .frame(height: 44)
+                .padding(.horizontal, AppSpacing.lg)
+                .background(AppColor.Tint.cta, in: .capsule)
+            }
 
-                Spacer(minLength: 0)
-
-                bottomControls
+            if showCaptions {
+                captions
             }
         }
+        .frame(maxHeight: .infinity)
         .onAppear {
             voice.onFinalTranscript = { transcript in
                 conversationViewModel.composerText = transcript
@@ -49,21 +66,45 @@ struct LiveVoiceConversationView: View {
                 }
                 conversationViewModel.respond()
             }
-            voice.requestPermissionsAndStart()
+            // Deferred past the entry transition — AVAudioSession/AVAudioEngine
+            // startup is real synchronous main-thread work (session activation
+            // talks to mediaserverd) that, run immediately on appear, competes
+            // with the spring for frame budget and reads as a hitch. Exit
+            // doesn't have this problem since `teardown()` only runs from
+            // `onDisappear`, which fires after the exit transition already
+            // finished — this just gives entry the same shape (per Dan 2026-07).
+            startTask = Task {
+                try? await Task.sleep(for: .seconds(AppAnimation.standardDuration))
+                guard !Task.isCancelled else { return }
+                voice.requestPermissionsAndStart()
+            }
         }
-        .onDisappear { voice.teardown() }
+        .onDisappear {
+            startTask?.cancel()
+            voice.teardown()
+        }
         .onChange(of: conversationViewModel.messages) { _, messages in
-            guard let last = messages.last, last.role == .assistant, last.status == .complete,
-                  last.id != lastSpokenMessageID else { return }
+            guard let last = messages.last, last.role == .assistant, last.id != lastSpokenMessageID,
+                  last.status == .complete || last.status == .failed else { return }
             lastSpokenMessageID = last.id
-            voice.speak(last.content, voiceIdentifier: selectedVoice.voiceIdentifier)
+            if last.status == .failed {
+                voice.reportGenerationFailure()
+            } else {
+                voice.speak(last.content, voiceIdentifier: selectedVoice.voiceIdentifier)
+            }
         }
     }
 
     private var statusLabel: String {
         switch voice.state {
-        case .requestingPermission: "Getting ready…"
-        case .listening: voice.liveTranscript.isEmpty ? "Listening…" : voice.liveTranscript
+        // Blank instead of "Getting ready…" — same reasoning as .listening
+        // below, the waveform's already on screen and animating by this
+        // point (per Dan 2026-07-16).
+        case .requestingPermission: ""
+        // Blank instead of "Listening…" — the animating waveform already
+        // reads as "listening," so the label only earns its keep once there's
+        // an actual transcript to show (per Dan 2026-07-16).
+        case .listening: voice.liveTranscript
         case .thinking: "Thinking…"
         case .speaking: "Speaking…"
         case .denied: "Microphone and Speech Recognition access are needed for voice mode. Enable them in Settings."
@@ -84,87 +125,6 @@ struct LiveVoiceConversationView: View {
         .transition(.opacity)
     }
 
-    private var topBar: some View {
-        HStack {
-            HStack(spacing: AppSpacing.xs) {
-                Circle()
-                    .fill(voice.state == .listening ? AppColor.warning : AppColor.Text.tertiary)
-                    .frame(width: 8, height: 8)
-                TimelineView(.periodic(from: startDate, by: 1)) { context in
-                    Text(elapsed(since: startDate, to: context.date))
-                        .font(AppFont.footnote.monospacedDigit())
-                        .foregroundStyle(AppColor.Text.inverse)
-                }
-            }
-            .padding(.horizontal, AppSpacing.sm)
-            .frame(height: 32)
-            .background(AppColor.Tint.cta, in: .capsule)
-
-            Spacer()
-
-            Button { showCaptions.toggle() } label: {
-                Text("CC")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(showCaptions ? AppColor.Text.inverse : AppColor.Text.primary)
-                    .frame(width: 32, height: 32)
-                    .background(showCaptions ? AppColor.Tint.cta : Color.clear, in: .circle)
-            }
-            .glassEffect(.regular.interactive(), in: .circle)
-
-            Button { onChangeVoice() } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(AppColor.Text.primary)
-                    .frame(width: 32, height: 32)
-            }
-            .glassEffect(.regular.interactive(), in: .circle)
-        }
-        .padding(.horizontal, AppSpacing.lg)
-        .padding(.top, AppSpacing.md)
-    }
-
-    private var bottomControls: some View {
-        HStack(spacing: AppSpacing.lg) {
-            Button { onClose() } label: {
-                Image(systemName: "keyboard")
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(AppColor.Text.primary)
-                    .frame(width: 52, height: 52)
-            }
-            .glassEffect(.regular.interactive(), in: .circle)
-            .accessibilityLabel("Switch to text")
-
-            Spacer()
-
-            Button { voice.isMuted.toggle() } label: {
-                Image(systemName: voice.isMuted ? "mic.slash.fill" : "mic.fill")
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(voice.isMuted ? AppColor.Text.inverse : AppColor.Text.primary)
-                    .frame(width: 52, height: 52)
-                    .background(voice.isMuted ? AppColor.error : Color.clear, in: .circle)
-            }
-            .glassEffect(.regular.interactive(), in: .circle)
-            .accessibilityLabel(voice.isMuted ? "Unmute" : "Mute")
-
-            Spacer()
-
-            Button { onClose() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(AppColor.Text.inverse)
-                    .frame(width: 52, height: 52)
-            }
-            .background(AppColor.Tint.cta, in: .circle)
-            .accessibilityLabel("End voice conversation")
-        }
-        .padding(.horizontal, AppSpacing.xl)
-        .padding(.bottom, AppSpacing.lg)
-    }
-
-    private func elapsed(since start: Date, to now: Date) -> String {
-        let seconds = max(0, Int(now.timeIntervalSince(start)))
-        return String(format: "%d:%02d", seconds / 60, seconds % 60)
-    }
 }
 
 #Preview("Light") {
@@ -173,6 +133,7 @@ struct LiveVoiceConversationView: View {
             conversationID: SampleData.conversations[0].id, store: ConversationStore(), aiService: MockAIService()
         ),
         selectedVoice: VoiceOption.availableVoices().first ?? VoiceOption(voiceIdentifier: "", name: "Ava", description: "Warm and encouraging", gradient: [.blue, .purple]),
-        onChangeVoice: {}, onClose: {}
+        showCaptions: .constant(false),
+        voice: VoiceConversationViewModel()
     )
 }

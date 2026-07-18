@@ -7,6 +7,9 @@ import SwiftUI
 struct AttachmentTray: View {
     var attachments: [Attachment]
     var tileSize: CGFloat = 56
+    /// Overrides each image tile's width, keeping `tileSize` as its height —
+    /// see `AttachmentTileView.tileWidth`. nil (default) keeps square tiles.
+    var tileWidth: CGFloat? = nil
     var corner: CGFloat = AppRadius.small
     /// Gap between tiles. Defaults to the chat's 12pt; the composer passes 8pt
     /// so the gap reads proportional next to its smaller (56pt vs 112pt) tiles.
@@ -24,12 +27,18 @@ struct AttachmentTray: View {
     /// tile, regardless of this setting.
     var alignment: HorizontalAlignment = .leading
     /// Extra width an OVERFLOWING row may claim beyond the normally-proposed
-    /// width, so its tiles crop at the true device edge instead of stopping
-    /// at the surrounding content margin (e.g. ConversationList's 24pt inset).
-    /// Has no effect on a row that fits — that one rests at the normal
-    /// margin, not the edge. 0 is correct for the composer, which has no
-    /// such margin to claim.
+    /// width on BOTH sides, so its tiles crop at the true device edge
+    /// instead of stopping at the surrounding content margin (e.g.
+    /// ConversationList's 24pt inset) — matching how Claude's own mobile app
+    /// runs a generated-image row edge-to-edge (per Dan 2026-07-17). Has no
+    /// effect on a row that fits — that one rests at the normal margin, not
+    /// the edge. 0 is correct for the composer, which has no such margin to
+    /// claim.
     var edgeCropInset: CGFloat = 0
+    /// Forwarded to each `AttachmentTileView` — see its own doc comment.
+    var onTapImage: ((Attachment) -> Void)? = nil
+    /// Forwarded to each `AttachmentTileView` — see its own doc comment.
+    var simulateGenerating: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
@@ -54,7 +63,7 @@ struct AttachmentTray: View {
     /// would come with it) just to learn whether the row overflows.
     private var naturalContentWidth: CGFloat {
         guard !attachments.isEmpty else { return 0 }
-        let tileWidths = attachments.map { $0.type == .image ? tileSize : AttachmentTileView.cardMaxWidth(for: tileSize) }
+        let tileWidths = attachments.map { $0.type == .image ? (tileWidth ?? tileSize) : AttachmentTileView.cardMaxWidth(for: tileSize) }
         return tileWidths.reduce(0, +) + CGFloat(attachments.count - 1) * tileSpacing
     }
 
@@ -62,19 +71,36 @@ struct AttachmentTray: View {
         GeometryReader { geometry in
             if naturalContentWidth > geometry.size.width {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    tileRow.padding(.vertical, 2)
+                    tileRow
+                        // Leading only, not trailing — tile 1 should rest
+                        // aligned with the surrounding text's own margin
+                        // (per Dan 2026-07-17), while the trailing side
+                        // stays free to scroll all the way to the bled
+                        // frame's true edge (see `edgeCropInset` above).
+                        .padding(.leading, edgeCropInset)
+                        .padding(.vertical, 2)
                 }
-                // Only an overflowing row claims the extra edge margin — see
-                // `edgeCropInset`.
-                .padding(.trailing, -edgeCropInset)
             } else {
-                // Fits: no scrolling needed, just rest at `alignment` within
-                // the normally-proposed (un-claimed) width.
+                // Fits: no scrolling needed, rest at `alignment` within the
+                // normally-proposed width — pulled back in by `edgeCropInset`
+                // to undo the outer bleed below, since a row that fits
+                // shouldn't hug the true device edge, only an overflowing
+                // one should.
                 tileRow
                     .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
                     .padding(.vertical, 2)
+                    .padding(.horizontal, edgeCropInset)
             }
         }
+        // Applied once, unconditionally, rather than only inside the
+        // overflow branch on the ScrollView itself — doing it per-branch
+        // (negative padding directly on the ScrollView) had it toggle in and
+        // out as the drag gesture drove repeated layout passes, which showed
+        // up as the trailing margin visibly flickering while actively
+        // dragging through the row (per Dan 2026-07-17). A single static
+        // expansion of the tray's own frame doesn't depend on anything that
+        // changes mid-gesture, so it stays stable under a drag.
+        .padding(.horizontal, -edgeCropInset)
         // GeometryReader fills all offered space by default — pin the height
         // to exactly what the content needs (tile + the vertical padding
         // above), matching what the ScrollView sized itself to before.
@@ -92,7 +118,10 @@ struct AttachmentTray: View {
         HStack(spacing: tileSpacing) {
             ForEach(Array(attachments.enumerated()), id: \.element.id) { index, attachment in
                 let shown = !staggers || appeared
-                AttachmentTileView(attachment: attachment, tileSize: tileSize, corner: corner)
+                AttachmentTileView(
+                    attachment: attachment, tileSize: tileSize, tileWidth: tileWidth, corner: corner,
+                    onTapImage: onTapImage, simulateGenerating: simulateGenerating
+                )
                     .overlay(alignment: .topTrailing) { removeButton(attachment) }
                     .opacity(shown ? 1 : 0)
                     .scaleEffect(shown ? 1 : 0.97, anchor: .bottom)

@@ -7,6 +7,8 @@ import SwiftUI
 struct StreamingMessage: View {
     var partialText: String
     var status: MessageStatus
+    /// See `MarkdownView`'s own doc comment — passed straight through.
+    var onRevealComplete: () -> Void = {}
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -31,7 +33,7 @@ struct StreamingMessage: View {
                 ThinkingText()
                     .transition(.opacity)
             } else {
-                MarkdownView(content: partialText, animateReveal: didStream)
+                MarkdownView(content: partialText, animateReveal: didStream, onRevealComplete: onRevealComplete)
                     .transition(.opacity)
             }
         }

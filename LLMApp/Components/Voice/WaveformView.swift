@@ -1,28 +1,25 @@
 import SwiftUI
 
-/// Vertical-bar waveform driven by a rolling window of amplitude samples
-/// (0...1). One instance for both listening (real mic level) and speaking
-/// (synthetic pulse) — the caller decides what feeds `levels`.
+/// Row of uniform pills — a static icon-style indicator (per Dan 2026-07-16:
+/// all bars the same height, not amplitude-reactive). `levels` still sets the
+/// bar count so the caller doesn't need a second parameter for it, but the
+/// values themselves no longer drive height.
 struct WaveformView: View {
-    /// Most recent sample last. Any count works; the view just lays out
-    /// whatever it's given.
     var levels: [Double]
-    var tint: Color = AppColor.Tint.cta
-    var barWidth: CGFloat = 6
-    var spacing: CGFloat = 6
-    var minHeight: CGFloat = 10
-    var maxHeight: CGFloat = 64
+    var tint: Color = AppColor.Text.primary
+    var barWidth: CGFloat = 5
+    var spacing: CGFloat = 10
+    var height: CGFloat = 20
 
     var body: some View {
         HStack(alignment: .center, spacing: spacing) {
-            ForEach(Array(levels.enumerated()), id: \.offset) { _, level in
+            ForEach(levels.indices, id: \.self) { _ in
                 Capsule()
                     .fill(tint)
-                    .frame(width: barWidth, height: minHeight + (maxHeight - minHeight) * CGFloat(level))
+                    .frame(width: barWidth, height: height)
             }
         }
-        .frame(height: maxHeight)
-        .animation(.easeOut(duration: 0.12), value: levels)
+        .frame(height: height)
     }
 }
 

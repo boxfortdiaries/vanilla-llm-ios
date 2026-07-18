@@ -4,13 +4,16 @@ import SwiftUI
 struct CharacterCounter: View {
     var count: Int
     var limit: Int
+    /// Color below the near-limit threshold — `.warning` always wins once
+    /// near the limit, regardless of this override.
+    var color: Color = AppColor.Text.tertiary
 
     private var isNearLimit: Bool { count > Int(Double(limit) * 0.9) }
 
     var body: some View {
         Text("\(count)/\(limit)")
             .font(AppFont.caption2)
-            .foregroundStyle(isNearLimit ? AppColor.warning : AppColor.Text.tertiary)
+            .foregroundStyle(isNearLimit ? AppColor.warning : color)
             .accessibilityLabel("\(count) of \(limit) characters")
     }
 }

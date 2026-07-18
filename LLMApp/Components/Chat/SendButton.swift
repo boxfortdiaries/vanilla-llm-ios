@@ -16,7 +16,7 @@ struct SendButton: View {
     @State private var sendTapped = false
 
     private var symbol: String {
-        if isGenerating { "stop.fill" } else if canSend { "arrow.up" } else { "mic.fill" }
+        if isGenerating { "stop.fill" } else if canSend { "arrow.up" } else { "waveform" }
     }
 
     var body: some View {

@@ -32,6 +32,10 @@ struct GlassNavigationBar: View {
         var identifier: String? = nil
         var handler: () -> Void = {}
         var menu: [MenuItem]? = nil
+        /// Set instead of `handler` to render this action as a `ShareLink`
+        /// for a file — mirrors `MenuItem.shareItem`, which only supports
+        /// `String` (text sharing); this covers sharing an actual file URL.
+        var shareURL: URL? = nil
     }
 
     struct MenuItem: Identifiable {
@@ -39,7 +43,12 @@ struct GlassNavigationBar: View {
         var title: String
         var icon: String
         var role: ButtonRole? = nil
-        var handler: () -> Void
+        /// Set instead of `handler` to render this row as a `ShareLink`
+        /// rather than a `Button` — the system share sheet needs to be
+        /// presented declaratively (same pattern as `MessageActionRow`'s
+        /// share icon), a plain tap closure can't trigger it.
+        var shareItem: String? = nil
+        var handler: () -> Void = {}
     }
 
     enum State {
@@ -118,11 +127,20 @@ struct GlassNavigationBar: View {
     /// owns the glass), a Menu for `menu` actions or a tap Button otherwise.
     @ViewBuilder
     private func trailingButton(_ action: Action) -> some View {
-        if let menu = action.menu {
+        if let shareURL = action.shareURL {
+            ShareLink(item: shareURL) { glassIcon(action.icon) }
+                .accessibilityLabel(action.label)
+        } else if let menu = action.menu {
             Menu {
                 ForEach(menu) { item in
-                    Button(role: item.role, action: item.handler) {
-                        Label(item.title, systemImage: item.icon)
+                    if let shareItem = item.shareItem {
+                        ShareLink(item: shareItem) {
+                            Label(item.title, systemImage: item.icon)
+                        }
+                    } else {
+                        Button(role: item.role, action: item.handler) {
+                            Label(item.title, systemImage: item.icon)
+                        }
                     }
                 }
             } label: {

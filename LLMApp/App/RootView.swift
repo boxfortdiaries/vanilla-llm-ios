@@ -207,11 +207,23 @@ private struct ChatCard: View {
     /// Bottom edge of the floating header (global), so the conversation can inset
     /// its content — and pin — to rest just below it.
     @State private var headerBottom: CGFloat = 0
+    /// Live voice state — owned here, not in `ConversationView`, specifically so
+    /// it survives a conversation switch (`ConversationView` is recreated via
+    /// `.id(currentID)` below on every switch, which would otherwise abruptly
+    /// kill an active call with no chance to animate it away). See the
+    /// `.onChange(of: coordinator.currentConversationID)` below for the actual
+    /// graceful-dismiss-on-switch behavior this makes possible.
+    @State private var voiceRoute: VoiceRoute?
+    @State private var showCaptions = false
 
     var body: some View {
         @Bindable var coordinator = container.navigationCoordinator
         let currentID = coordinator.currentConversationID
         let isEmpty = container.conversationStore.conversation(id: currentID)?.messages.isEmpty ?? true
+        // Same curve RootView uses for the drawer's own open/close — reused here
+        // so a voice call ending because of a real conversation switch reads as
+        // part of the same motion language, not a separate animation.
+        let voiceDismissAnim = AppAnimation.resolve(.smooth(duration: AppAnimation.slowDuration), reduceMotion: reduceMotion)
 
         AppBackground {
             NavigationStack(path: Bindable(container.router).path) {
@@ -220,6 +232,8 @@ private struct ChatCard: View {
                     store: container.conversationStore,
                     aiService: container.aiService,
                     headerHeight: headerBottom,
+                    voiceRoute: $voiceRoute,
+                    showCaptions: $showCaptions,
                     onComposerFrame: onComposerFrame
                 )
                 .id(currentID)
@@ -255,6 +269,14 @@ private struct ChatCard: View {
         .environment(container.appState)
         .environment(container.router)
         .environment(container.navigationCoordinator)
+        // A voice call survives peeking at the sidebar (see `voiceRoute`'s own
+        // doc comment) but not an actual conversation switch — end it here,
+        // explicitly and animated, rather than letting `ConversationView`'s
+        // `.id(currentID)` rebuild silently kill it with no transition.
+        .onChange(of: currentID) { _, _ in
+            guard voiceRoute != nil else { return }
+            withAnimation(voiceDismissAnim) { voiceRoute = nil }
+        }
         .alert("Rename Conversation", isPresented: $isRenaming) {
             TextField("Title", text: $renameText)
             Button("Cancel", role: .cancel) {}
@@ -265,8 +287,52 @@ private struct ChatCard: View {
         }
     }
 
+    /// Plain-text transcript for the nav bar's "Share" item — same
+    /// "Role: content" convention as `MessageBubble`'s accessibility label,
+    /// joined into one shareable block since there's no single message to
+    /// hand `ShareLink` here (per Dan 2026-07-17: this item was a dead stub).
+    private func shareText(for currentID: UUID) -> String {
+        let messages = container.conversationStore.conversation(id: currentID)?.messages ?? []
+        return messages
+            .map { message in
+                let role = switch message.role {
+                case .user: "You"
+                case .assistant: "Assistant"
+                case .system: "System"
+                }
+                return "\(role): \(message.content)"
+            }
+            .joined(separator: "\n\n")
+    }
+
     private func trailingActions(currentID: UUID, isEmpty: Bool) -> [GlassNavigationBar.Action] {
         let coordinator = container.navigationCoordinator
+        // While a voice call is active, the trailing menu swaps to voice-only
+        // actions — rename/share/archive/delete aren't relevant mid-call, and
+        // this is what replaces `LiveVoiceConversationView`'s old standalone
+        // options icon now that the real header is what's visible during voice
+        // mode too.
+        if voiceRoute != nil {
+            return [
+                .init(icon: "slider.horizontal.3", label: "Voice Options", menu: [
+                    .init(title: "Change Voice", icon: "person.wave.2") {
+                        // Same spring token as every other voiceRoute change
+                        // (see `ConversationView.setVoiceRoute`) — this one
+                        // fires from here instead since the trailing menu
+                        // itself lives in `ChatCard`.
+                        withAnimation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion)) {
+                            voiceRoute = .picker
+                        }
+                    },
+                    .init(
+                        title: showCaptions ? "Hide Captions" : "Show Captions",
+                        icon: showCaptions ? "captions.bubble.fill" : "captions.bubble"
+                    ) {
+                        showCaptions.toggle()
+                    },
+                ]),
+            ]
+        }
         return [
             // Quick new chat, hidden on an empty conversation (already a blank
             // slate). The drawer hamburger remains the full new-chat surface.
@@ -276,7 +342,7 @@ private struct ChatCard: View {
                     renameText = container.conversationStore.conversation(id: currentID)?.title ?? ""
                     isRenaming = true
                 },
-                .init(title: "Share", icon: "square.and.arrow.up") {},
+                .init(title: "Share", icon: "square.and.arrow.up", shareItem: shareText(for: currentID)),
                 .init(title: "Archive", icon: "archivebox", handler: coordinator.newChat),
                 .init(title: "Delete", icon: "trash", role: .destructive, handler: coordinator.newChat),
             ]),

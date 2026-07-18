@@ -60,6 +60,15 @@ final class ConversationViewModel {
 
         composerText = ""
         attachments = []
+        // Set here, not left until `respond()` actually starts streaming —
+        // `respond()` fires after a deliberate settle delay (see
+        // `ConversationView.handleSend`) so the pin-scroll can finish first,
+        // and `composerText` is already empty by this point. Without this,
+        // the composer's CTA reads neither "can send" nor "generating" for
+        // that whole window and falls back to its default voice-mic icon,
+        // flashing send → mic → stop instead of send → stop directly (per
+        // Dan 2026-07-17).
+        generationState = .generating
 
         // Fall back to a short stand-in prompt so the mock service still replies
         // to an images-only turn.
@@ -81,19 +90,34 @@ final class ConversationViewModel {
     /// (remove it and regenerate). Also used for the "Regenerate" action on
     /// a completed assistant message.
     func retry(_ message: Message) {
-        var updated = conversation
+        let updated = conversation
         guard let index = updated.messages.firstIndex(where: { $0.id == message.id }) else { return }
 
         switch message.role {
         case .user:
+            var updated = updated
             updated.messages[index].status = .retrying
             store.upsert(updated)
             generate(triggeringMessageID: message.id, prompt: message.content, context: Array(updated.messages.prefix(index + 1)))
         case .assistant:
-            updated.messages.remove(at: index)
-            store.upsert(updated)
-            let prompt = updated.messages.last(where: { $0.role == .user })?.content ?? ""
-            generate(triggeringMessageID: nil, prompt: prompt, context: updated.messages)
+            // Reuses the existing message's id instead of removing it and
+            // appending a new one (per Dan 2026-07-17: regenerating
+            // shouldn't "progress the conversation," just reset this reply
+            // back to a thinking state). Removing it briefly made the last
+            // *user* message look like the newest one, which spuriously
+            // re-triggered `ConversationList`'s new-message auto-scroll —
+            // that pin request then raced the regenerated reply's own
+            // "Thinking" row appearing, landing the pinned message behind
+            // the nav bar. Reusing the id means `messages.last?.id` never
+            // changes, so that auto-scroll never fires at all — the
+            // viewport correctly just stays put.
+            let prompt = updated.messages.prefix(index).last(where: { $0.role == .user })?.content ?? ""
+            generate(
+                triggeringMessageID: nil,
+                replacingMessageID: message.id,
+                prompt: prompt,
+                context: Array(updated.messages.prefix(index))
+            )
         case .system:
             break
         }
@@ -103,7 +127,22 @@ final class ConversationViewModel {
         generationTask?.cancel()
     }
 
-    private func generate(triggeringMessageID: UUID?, prompt: String, context: [Message]) {
+    /// Tapping an already-set reaction clears it back to `.none` — like and
+    /// dislike are mutually exclusive, so setting one always replaces the
+    /// other (per Dan 2026-07-17).
+    func setFeedback(_ feedback: MessageFeedback, for id: UUID) {
+        var updated = conversation
+        guard let index = updated.messages.firstIndex(where: { $0.id == id }) else { return }
+        updated.messages[index].feedback = updated.messages[index].feedback == feedback ? .none : feedback
+        store.upsert(updated)
+    }
+
+    private func generate(
+        triggeringMessageID: UUID?,
+        replacingMessageID: UUID? = nil,
+        prompt: String,
+        context: [Message]
+    ) {
         generationState = .generating
 
         if let triggeringMessageID {
@@ -111,7 +150,14 @@ final class ConversationViewModel {
         }
 
         generationTask = Task {
-            var assistantMessage = Message(role: .assistant, content: "", status: .streaming)
+            // Reuses `replacingMessageID` (regenerate) so this resets the
+            // existing row in place rather than appending a new one — see
+            // `retry(_:)`'s doc comment.
+            var assistantMessage = Message(id: replacingMessageID ?? UUID(), role: .assistant, content: "", status: .streaming)
+            // Set immediately, before the text stream starts, so the image
+            // row appears first and the caption cascades in below it —
+            // matching the reference layout (per Dan 2026-07-17).
+            assistantMessage.attachments = DemoImageAttachments.generate(for: prompt)
             appendOrUpdate(assistantMessage)
 
             do {

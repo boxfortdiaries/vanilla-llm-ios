@@ -65,6 +65,7 @@ import SwiftUI
 /// ownership (§4.5).
 struct ConversationList: View {
     var messages: [Message]
+    var actions: MessageActions = MessageActions()
     @Binding var isAtBottom: Bool
     /// Increment to force a return to the live conversation regardless of
     /// current ownership — the "return to latest" button (spec §18.7) uses
@@ -96,6 +97,7 @@ struct ConversationList: View {
     var body: some View {
         MessageScrollHost(
             messages: messages,
+            actions: actions,
             topInset: topInset,
             bottomInset: bottomInset,
             controller: scrollController,
@@ -118,8 +120,26 @@ struct ConversationList: View {
         // `ConversationView` already keeps it above the keyboard, so this view
         // doesn't need to shrink for it too.
         .ignoresSafeArea([.container, .keyboard], edges: [.top, .bottom])
-        // Open with the latest turn pinned to the top (no animation on open).
-        .onAppear { pinLatestTurn(animated: false) }
+        // Open with the latest turn pinned to the top (no animation on open)
+        // — but ONLY when the last message isn't the user's own. A fast
+        // send (e.g. attach photos → Send, completed within this view's own
+        // mount window) can have the message already sitting in `messages`
+        // by the time `.onAppear` fires at all — there's no 0→1 transition
+        // left for the `.onChange` below to observe, so without this split
+        // the message would silently fall through to this instant,
+        // non-chased snap instead of the animated one, and get measured
+        // via `pinnedMessageMinY` before its own freshly-inserted row had
+        // finished laying out — exactly the "freshly-inserted row reads
+        // stale" hazard `scrollToCanonical`'s own chase mechanism exists to
+        // avoid, just reached through the one path that skips it. Confirmed
+        // via NSLog: `.onChange(of: messages.last?.id)` (without
+        // `initial:`) never fired for the user's own message in this
+        // scenario at all — only later, once the assistant's reply
+        // appended a second message (per Dan 2026-07-17).
+        .onAppear {
+            guard messages.last?.role != .user else { return }
+            pinLatestTurn(animated: false)
+        }
         // A just-sent user message pins to the top (pushing earlier turns up).
         // Assistant messages don't scroll on their own — the reserve holds the
         // user message in place while the reply fills the gap below it
@@ -128,7 +148,12 @@ struct ConversationList: View {
         // architecture §10.9, returning to live is a state transition, not
         // just a scroll, so this should happen even if the user had been
         // browsing history when they sent it.
-        .onChange(of: messages.last?.id) {
+        //
+        // `initial: true` — evaluates the CURRENT state once on mount too,
+        // not just subsequent changes, so a message that arrived before
+        // this view even appeared (the race above) still gets its animated,
+        // chase-enabled pin instead of being missed entirely.
+        .onChange(of: messages.last?.id, initial: true) {
             guard messages.last?.role == .user else { return }
             pinLatestTurn()
         }

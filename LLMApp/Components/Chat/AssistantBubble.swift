@@ -4,9 +4,48 @@ import SwiftUI
 /// containers" — full-width plain text/markdown, no bubble background.
 struct AssistantBubble: View {
     var message: Message
+    var actions: MessageActions = MessageActions()
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Flips true once `StreamingMessage`/`MarkdownView`'s cascade reveal has
+    /// actually finished *playing*, not just once the text finished
+    /// *arriving* — `message.status` alone flips to `.complete` the instant
+    /// generation ends, well before the reveal animation finishes sweeping
+    /// the text in, so gating the action row on status alone made it appear
+    /// mid-cascade (per Dan 2026-07-17). Reverted an attempt to decouple this
+    /// from the cascade entirely — that made the row appear too early again;
+    /// the actual fix was shortening the cascade itself (see
+    /// `MarkdownView.blockDuration`/`blockStagger`).
+    @State private var revealComplete = false
+    /// Set on tap of a generated-image tile; drives the full-screen preview
+    /// (per Dan 2026-07-17). Only this call site opts into `onTapImage` —
+    /// the composer's own preview tray and a sent message's row don't.
+    @State private var previewedAttachment: Attachment?
+
+    private var imageAttachments: [Attachment] { message.attachments.filter { $0.type == .image } }
+    private var fileAttachments: [Attachment] { message.attachments.filter { $0.type != .image } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppSpacing.sm) {
+        VStack(alignment: .leading, spacing: AppSpacing.md) {
+            // Generated images come first, above the caption — not gated on
+            // `revealComplete` like the action row below; it plays its own
+            // stagger-in immediately, same as a sent message's own image row
+            // (per Dan 2026-07-17).
+            if !imageAttachments.isEmpty {
+                AttachmentTray(
+                    attachments: imageAttachments, tileSize: 112, tileWidth: 224,
+                    corner: AppRadius.medium, staggerOnAppear: true, alignment: .leading,
+                    // Tile 1 rests aligned with the caption's own margin
+                    // below it; scrolling past the trailing tile still crops
+                    // at the true device edge, not the content column's edge
+                    // — see `AttachmentTray`'s own doc comments (per Dan
+                    // 2026-07-17).
+                    edgeCropInset: AppSpacing.lg,
+                    onTapImage: { previewedAttachment = $0 },
+                    simulateGenerating: true
+                )
+            }
+
             if message.status == .failed {
                 HStack(alignment: .top, spacing: AppSpacing.xs) {
                     Image(systemName: "exclamationmark.circle.fill")
@@ -15,22 +54,73 @@ struct AssistantBubble: View {
                         .font(AppFont.body)
                         .foregroundStyle(AppColor.Text.secondary)
                 }
+                .messageTextContextMenu(message: message, actions: actions, includeRegenerate: true)
             } else {
                 // Delegates to StreamingMessage so the cursor (spec §13.2:
                 // "cursor visible while streaming") shows for every
                 // in-progress state, not just a separate rarely-used path.
-                StreamingMessage(partialText: message.content, status: message.status)
+                StreamingMessage(partialText: message.content, status: message.status) {
+                    // Entrance matches the reply's own cascade curve (see
+                    // the row's `.opacity` modifier below).
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: MarkdownView.blockDuration)) {
+                        revealComplete = true
+                    }
+                }
+                // Regenerate resets this same message back to `.streaming`
+                // in place (same id, see `ConversationViewModel.retry`) —
+                // without this, `revealComplete` stays true from the
+                // *previous* reply and the row never re-hides for the new
+                // thinking state (per Dan 2026-07-17).
+                .onChange(of: message.status) { _, new in
+                    if new == .streaming {
+                        // Exit matches the agent message's OWN exit — the
+                        // same `AppAnimation.standard` spring StreamingMessage
+                        // uses for its `isThinking` swap — rather than the
+                        // cascade curve used for the entrance, so the row and
+                        // the text it sits under leave together (per Dan
+                        // 2026-07-17).
+                        withAnimation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion)) {
+                            revealComplete = false
+                        }
+                    }
+                }
+                .messageTextContextMenu(message: message, actions: actions, includeRegenerate: true)
             }
 
-            if !message.attachments.isEmpty {
+            if !fileAttachments.isEmpty {
                 HStack(spacing: AppSpacing.xs) {
-                    ForEach(message.attachments) { attachment in
-                        Chip(text: attachment.name, icon: attachment.type == .image ? "photo" : "doc")
+                    ForEach(fileAttachments) { attachment in
+                        Chip(text: attachment.name, icon: "doc")
                     }
                 }
             }
+
+            // Space reserved from the very first render (not just once
+            // `revealComplete`) — only opacity toggles at reveal time, never
+            // presence. Popping the row in with its full height right at the
+            // reveal moment grew the hosted content's intrinsic size right
+            // then, which bumped the scroll position and settled back down —
+            // this view lives inside `MessageScrollHost`'s UIKit-owned
+            // scroll view, whose pin-tracking is tuned around content above
+            // the pinned row staying put and doesn't know about a height
+            // change happening below it (per Dan 2026-07-17). Not shown at
+            // all on a failed reply, which already has its own error
+            // affordance above.
+            if message.status != .failed {
+                // No blanket `.animation(value:)` here — entrance and exit
+                // intentionally use different curves (see the two
+                // `withAnimation` call sites above), so each transition
+                // needs to carry its own animation rather than share one.
+                MessageActionRow(message: message, actions: actions)
+                    .opacity(revealComplete ? 1 : 0)
+                    .allowsHitTesting(revealComplete)
+                    .accessibilityHidden(!revealComplete)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .fullScreenCover(item: $previewedAttachment) { attachment in
+            EditImagePreviewView(attachment: attachment)
+        }
     }
 }
 

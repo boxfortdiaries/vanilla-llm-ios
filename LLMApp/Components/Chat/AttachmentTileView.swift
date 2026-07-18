@@ -8,7 +8,33 @@ import UIKit
 struct AttachmentTileView: View {
     let attachment: Attachment
     var tileSize: CGFloat = 112
+    /// Overrides the tile's width, keeping `tileSize` as its height — for a
+    /// wide rectangular tile (e.g. a generated-image row) rather than a
+    /// square. nil (default) keeps the square behavior every other caller
+    /// uses.
+    var tileWidth: CGFloat? = nil
     var corner: CGFloat = AppRadius.medium
+    /// Set to make an image tile tappable (e.g. tap-to-preview) — nil
+    /// (default) keeps the tile a plain, non-interactive view, so callers
+    /// that don't opt in (composer preview, sent-message row) are unaffected.
+    var onTapImage: ((Attachment) -> Void)? = nil
+    /// When true, an image tile shows a shimmering placeholder first and
+    /// reveals the real image after a random 2-4s delay — simulates images
+    /// arriving from a generation backend at staggered times instead of all
+    /// popping in identically at once (per Dan 2026-07-17). Off by default —
+    /// only the generated-image row opts in; a user's own sent/composer
+    /// images are already on disk and should show immediately.
+    var simulateGenerating: Bool = false
+
+    @State private var revealed = false
+    /// Rolled once per tile instance, not re-rolled on every re-render —
+    /// SwiftUI only evaluates a `@State` initial value on a view identity's
+    /// first appearance (identity here is `attachment.id`, via `AttachmentTray`'s
+    /// `ForEach`), so this stays stable across the many re-renders the
+    /// in-progress reply's own text streaming triggers.
+    @State private var revealDelay = Double.random(in: 2...4)
+    @State private var shimmerPhase: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var iconSize: CGFloat { tileSize * 0.643 }
     private var cardMaxWidth: CGFloat { Self.cardMaxWidth(for: tileSize) }
@@ -20,19 +46,78 @@ struct AttachmentTileView: View {
     static func cardMaxWidth(for tileSize: CGFloat) -> CGFloat { min(tileSize * 3.93, 300) }
 
     var body: some View {
-        if attachment.type == .image, let image = thumbnail {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: tileSize, height: tileSize)
-                .clipShape(RoundedRectangle(cornerRadius: corner))
-                .overlay {
-                    RoundedRectangle(cornerRadius: corner)
-                        .strokeBorder(AppColor.Separator.subtle, lineWidth: 1)
-                }
+        if attachment.type == .image {
+            if simulateGenerating && !revealed {
+                generatingTile
+                    .task {
+                        try? await Task.sleep(for: .seconds(revealDelay))
+                        guard !Task.isCancelled else { return }
+                        withAnimation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion)) {
+                            revealed = true
+                        }
+                    }
+            } else if let image = thumbnail {
+                imageTile(image)
+            }
         } else {
             fileCard
         }
+    }
+
+    private func imageTile(_ image: UIImage) -> some View {
+        let tile = Image(uiImage: image)
+            .resizable()
+            .scaledToFill()
+            .frame(width: tileWidth ?? tileSize, height: tileSize)
+            .clipShape(RoundedRectangle(cornerRadius: corner))
+            .overlay {
+                RoundedRectangle(cornerRadius: corner)
+                    .strokeBorder(AppColor.Separator.subtle, lineWidth: 1)
+            }
+            .transition(.opacity.combined(with: .scale(scale: 0.97)))
+        return Group {
+            if let onTapImage {
+                Button { onTapImage(attachment) } label: { tile }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("View image")
+            } else {
+                tile
+            }
+        }
+    }
+
+    /// Shimmer technique matches `ThinkingText`'s — a light band sweeping
+    /// through a masked shape on a loop — reused here masked to a rounded
+    /// rect tile instead of text glyphs.
+    private var generatingTile: some View {
+        let width = tileWidth ?? tileSize
+        return RoundedRectangle(cornerRadius: corner)
+            .fill(AppColor.selection)
+            .frame(width: width, height: tileSize)
+            .overlay {
+                GeometryReader { geo in
+                    let bandWidth = geo.size.width * 0.5
+                    LinearGradient(
+                        colors: [.clear, AppColor.Surface.primary, .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: bandWidth)
+                    .offset(x: shimmerPhase * (geo.size.width + bandWidth) - bandWidth)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: corner))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: corner)
+                    .strokeBorder(AppColor.Separator.subtle, lineWidth: 1)
+            }
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.linear(duration: AppAnimation.thinkingShimmerDuration).repeatForever(autoreverses: false)) {
+                    shimmerPhase = 1
+                }
+            }
+            .accessibilityLabel("Generating image")
     }
 
     private var fileCard: some View {
