@@ -26,6 +26,11 @@ final class MessageScrollController {
     func scrollToCanonical(animated: Bool) {
         viewController?.scrollToCanonical(animated: animated)
     }
+
+    /// See `MessageScrollViewController.scrollToLive`'s doc comment.
+    func scrollToLive(animated: Bool) {
+        viewController?.scrollToLive(animated: animated)
+    }
 }
 
 /// Hosts `MessageListContent` inside a real `UIScrollView` — see
@@ -361,6 +366,18 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
         scrollView.contentSize.height - scrollView.bounds.height + bottomInset - AppSpacing.md
     }
 
+    /// The same target `scrollViewWillEndDragging`'s Live Boundary recovery
+    /// resolves to (see its own doc comment for the full reasoning) — safe
+    /// only once the pinned row is settled, never right after a fresh send.
+    /// Shared so the "go to bottom" button (`scrollToLive`, always tapped on
+    /// an already-settled conversation) lands in the exact same place as
+    /// releasing past the Live Boundary, per Dan 2026-07-18.
+    private var settledLiveTargetY: CGFloat {
+        let messagesBottom = scrollView.contentSize.height - reserveHeight
+        let revealTrailingTarget = messagesBottom - scrollView.bounds.height + bottomInset
+        return max(pinnedMessageMinY - topInset, revealTrailingTarget)
+    }
+
     /// The one recovery target every system-owned scroll resolves to
     /// (architecture §2.4, §2.12, §2.13) — the last user message pinned to
     /// `topInset` from the top. Ported 1:1 from `ConversationList`'s
@@ -430,6 +447,34 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
         chaseAttempts = 0
         // 0.35s (down from 0.55s — still too slow, per Dan 2026-07-17).
         animateChase(to: target.y, duration: 0.35)
+    }
+
+    /// The "go to bottom" button's own scroll — always tapped on an
+    /// already-settled conversation (the button only shows once the user has
+    /// scrolled away from live), never right after a fresh send, so unlike
+    /// `scrollToCanonical` this doesn't need the chase mechanism (there's no
+    /// still-streaming target to keep re-checking) and can target
+    /// `settledLiveTargetY` directly — landing in the exact same place a
+    /// release past the Live Boundary does (`scrollViewWillEndDragging`),
+    /// per Dan 2026-07-18.
+    func scrollToLive(animated: Bool) {
+        guard hasLastUserMessage else { return }
+        view.layoutIfNeeded()
+        let target = CGPoint(x: scrollView.contentOffset.x, y: settledLiveTargetY)
+        guard animated else {
+            scrollView.contentOffset = target
+            logSettled(target: target, finished: true)
+            return
+        }
+        let scrollView = scrollView
+        UIView.animate(
+            withDuration: 0.35, delay: 0,
+            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
+            animations: { scrollView.contentOffset = target },
+            completion: { [weak self] finished in
+                self?.logSettled(target: target, finished: finished)
+            }
+        )
     }
 
     /// See `scrollToCanonical`'s doc comment for the "chase, don't correct
@@ -551,7 +596,13 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
             // the last real message (not a valid place to browse from —
             // there's nothing there yet). Neither is navigation (§4.7):
             // recovers to the pinned (last user) message, same as before.
-            let canonicalY = canonicalTargetY
+            //
+            // `settledLiveTargetY`, NOT `canonicalTargetY` — see that
+            // property's own doc comment for why this is only safe once the
+            // pinned row is settled (never right after a fresh send), and
+            // `scrollToLive`'s doc comment for why the "go to bottom" button
+            // shares this exact target.
+            let canonicalY = settledLiveTargetY
             NSLog(
                 "[ScrollHost] recovery override (bottom) nativeTarget=%.2f canonicalTarget=%.2f bottomOverscrollAtTarget=%.2f",
                 targetContentOffset.pointee.y, canonicalY, targetBottomOverscroll

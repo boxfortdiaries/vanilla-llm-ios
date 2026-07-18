@@ -160,7 +160,11 @@ struct ConversationList: View {
         .onChange(of: scrollToBottomTrigger) {
             ownership = .system
             scrollController.isSystemOwned = true
-            scrollController.scrollToCanonical(animated: true)
+            // scrollToLive, not scrollToCanonical — this button only ever
+            // fires on an already-settled conversation (shown once the user
+            // has scrolled away from live), so it shares the Live Boundary's
+            // own settled-safe target instead of the fresh-send-only one.
+            scrollController.scrollToLive(animated: true)
         }
     }
 
