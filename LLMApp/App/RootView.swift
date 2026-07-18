@@ -29,14 +29,15 @@ struct RootView: View {
     /// right edge (ChatGPT pattern) rather than overlaying the search on top.
     @State private var containerWidth: CGFloat = 0
 
-    /// On-screen frame of the composer, reported up from it. A closed-drawer
-    /// open-drag that starts on the composer is ignored so the attachment tray's
-    /// own horizontal scroll isn't hijacked into dragging the chat open. Passed
-    /// via a callback (not a PreferenceKey — the NavigationStack between here and
-    /// the composer swallows preferences crossing its boundary).
-    @State private var composerFrame: CGRect = .zero
-
     private let drawerWidth: CGFloat = 300
+    /// How close to the leading screen edge a closed-drawer drag must *start*
+    /// to open it (like iOS's own edge-swipe-back). Any horizontally-scrolling
+    /// content in a message (code blocks, tables) sits at least `AppSpacing.lg`
+    /// in from the edge, so this stays clear of it without tracking every such
+    /// view's frame individually. Closing (drawer already open) stays
+    /// full-surface — the tap-catcher overlay below already makes the content
+    /// behind it inert, so there's nothing for a close-drag to conflict with.
+    private let openEdgeZone: CGFloat = AppSpacing.lg
     /// Leading-corner radius the chat reaches when the drawer is fully open —
     /// near an iPhone's display corner radius so it reads as a floating card.
     private let chatCornerRadius: CGFloat = 52
@@ -97,7 +98,7 @@ struct RootView: View {
             // the conversation's `.id`, so switching conversations rebuilds only
             // the message content — the nav bar survives and its trailing pill
             // morphs instead of snapping.
-            ChatCard(container: container, onComposerFrame: { composerFrame = $0 })
+            ChatCard(container: container)
             .environment(\.navGlassInteractive, chatGlassInteractive)
             // Drop interactive glass on the nav buttons across a search
             // open/close (keep it off through the retract so the reveal doesn't
@@ -165,14 +166,16 @@ struct RootView: View {
         }
         // Drag the chat to open/close the drawer. `simultaneousGesture` so it
         // never blocks vertical scrolling or button taps beneath it; we only
-        // act on horizontal-dominant drags. A closed-drawer open-drag that
-        // starts on the composer is skipped so the attachment tray keeps its
-        // own horizontal scroll. On release, project the throw and snap past half.
+        // act on horizontal-dominant drags. Opening (closed drawer) only arms
+        // from the leading `openEdgeZone` strip, so it never competes with a
+        // horizontal scroll inside the message content (code blocks, tables,
+        // the attachment tray) for the same drag. On release, project the
+        // throw and snap past half.
         .simultaneousGesture(
             DragGesture(minimumDistance: 10, coordinateSpace: .global)
                 .onChanged { value in
                     guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                    if !coordinator.isSidebarOpen && composerFrame.contains(value.startLocation) { return }
+                    if !coordinator.isSidebarOpen && value.startLocation.x > openEdgeZone { return }
                     drawerDragActive = true
                     dragTranslation = value.translation.width
                 }
@@ -199,8 +202,6 @@ struct RootView: View {
 /// drives the bar straight from the store (no per-conversation view model).
 private struct ChatCard: View {
     let container: AppContainer
-    /// Reports the composer's on-screen frame up to RootView's drawer gesture.
-    var onComposerFrame: (CGRect) -> Void = { _ in }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isRenaming = false
     @State private var renameText = ""
@@ -233,8 +234,7 @@ private struct ChatCard: View {
                     aiService: container.aiService,
                     headerHeight: headerBottom,
                     voiceRoute: $voiceRoute,
-                    showCaptions: $showCaptions,
-                    onComposerFrame: onComposerFrame
+                    showCaptions: $showCaptions
                 )
                 .id(currentID)
             }
