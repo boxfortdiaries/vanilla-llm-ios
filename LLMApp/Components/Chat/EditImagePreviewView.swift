@@ -54,6 +54,14 @@ struct EditImagePreviewView: View {
         return UIImage(contentsOfFile: url.path)
     }
 
+    /// Supplied to `ShareLink` up front so the system share sheet's header
+    /// doesn't have to derive it asynchronously — see `GlassNavigationBar
+    /// .Action.sharePreview`'s own doc comment for why.
+    private var selectedSharePreview: SharePreview<Image, Never>? {
+        guard let attachment = selectedAttachment, let image = image(for: attachment) else { return nil }
+        return SharePreview(attachment.name, image: Image(uiImage: image))
+    }
+
     var body: some View {
         ZStack {
             AppColor.Background.primary.ignoresSafeArea()
@@ -97,7 +105,7 @@ struct EditImagePreviewView: View {
                 // opened once (see its own doc comment). One action doesn't
                 // need a menu to hide behind anyway.
                 trailingActions: [
-                    .init(icon: "square.and.arrow.up", label: "Share", shareURL: selectedAttachment?.url),
+                    .init(icon: "square.and.arrow.up", label: "Share", shareURL: selectedAttachment?.url, sharePreview: selectedSharePreview),
                     .init(icon: "square.and.arrow.down", label: "Save to Photos", handler: {}),
                 ]
             )
@@ -143,11 +151,13 @@ struct EditImagePreviewView: View {
                 onRemoveAttachment: { attachment in
                     editAttachments.removeAll { $0.id == attachment.id }
                 },
+                // Doesn't send the scoped image immediately — it rides along
+                // with whatever the user says first in the voice session (see
+                // `MessageActions.onStartVoice`'s own doc comment), so
+                // tapping the mic and immediately backing out without
+                // speaking leaves the conversation untouched.
                 onMicTap: {
-                    if let selectedAttachment {
-                        actions.onSendElsewhere("", [selectedAttachment])
-                    }
-                    actions.onStartVoice()
+                    actions.onStartVoice(selectedAttachment)
                     dismiss()
                 },
                 // A file doesn't make sense as an image-edit reference (per
@@ -192,6 +202,13 @@ struct EditImagePreviewView: View {
 /// hosting controller doesn't have this override in place for the
 /// presentation's own opening snapshot, which is what caused a black/white
 /// window flash the very first time this was tried undelayed.
+///
+/// A window-level version was tried instead (per Dan 2026-07-19), since a
+/// share sheet's `UIActivityViewController` doesn't reliably inherit this
+/// view-controller-scoped override — but overriding the whole window visibly
+/// flashed the *entire app* to dark and back on open/close, which reads far
+/// worse than the Share sheet staying light. Reverted; not worth chasing
+/// further.
 private struct DarkInterfaceStyleOverride: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
         let probe = UIView()

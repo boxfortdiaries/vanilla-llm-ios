@@ -84,7 +84,10 @@ struct ConversationView: View {
             viewModel.attachments = attachments
             handleSend()
         }
-        actions.onStartVoice = handleMicTap
+        actions.onStartVoice = { attachment in
+            viewModel.pendingVoiceAttachment = attachment
+            handleMicTap()
+        }
         return actions
     }
 

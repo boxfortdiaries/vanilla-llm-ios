@@ -13,6 +13,14 @@ final class ConversationViewModel {
     var composerText = ""
     var attachments: [Attachment] = []
     private(set) var generationState: ConversationGenerationState = .idle
+    /// An image scoped in the preview sheet before entering voice mode via
+    /// its mic button, held here (not sent) until the user's first spoken
+    /// transcript actually arrives — `LiveVoiceConversationView` attaches it
+    /// to that first message, then clears this. If voice mode is exited
+    /// before that happens, `LiveVoiceConversationView` clears it unsent
+    /// instead (per Dan 2026-07-19: tapping the mic and immediately backing
+    /// out shouldn't have silently sent anything).
+    var pendingVoiceAttachment: Attachment?
 
     private var generationTask: Task<Void, Never>?
 

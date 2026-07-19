@@ -26,6 +26,13 @@ struct LiveVoiceConversationView: View {
     var voice: VoiceConversationViewModel
 
     @State private var lastSpokenMessageID: UUID?
+    /// False until the user's own voice has actually produced a transcript
+    /// in this session — gates auto-speak below so a reply to a message sent
+    /// *before* the user ever spoke (e.g. the scoped image image preview's
+    /// mic button carries in automatically) doesn't get read aloud the
+    /// instant voice mode opens; the waveform-first entry shouldn't talk
+    /// back before the user has said anything (per Dan 2026-07-19).
+    @State private var userHasSpoken = false
     @State private var startTask: Task<Void, Never>?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -60,7 +67,15 @@ struct LiveVoiceConversationView: View {
         .frame(maxHeight: .infinity)
         .onAppear {
             voice.onFinalTranscript = { transcript in
+                userHasSpoken = true
                 conversationViewModel.composerText = transcript
+                // Rides along with this first utterance rather than having
+                // been sent the moment the mic was tapped — see
+                // `MessageActions.onStartVoice`'s own doc comment.
+                if let pending = conversationViewModel.pendingVoiceAttachment {
+                    conversationViewModel.attachments = [pending]
+                    conversationViewModel.pendingVoiceAttachment = nil
+                }
                 withAnimation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion)) {
                     _ = conversationViewModel.send()
                 }
@@ -82,11 +97,18 @@ struct LiveVoiceConversationView: View {
         .onDisappear {
             startTask?.cancel()
             voice.teardown()
+            // Discarded unsent if the user exited without ever speaking —
+            // already nil if `onFinalTranscript` already consumed it.
+            conversationViewModel.pendingVoiceAttachment = nil
         }
         .onChange(of: conversationViewModel.messages) { _, messages in
             guard let last = messages.last, last.role == .assistant, last.id != lastSpokenMessageID,
                   last.status == .complete || last.status == .failed else { return }
             lastSpokenMessageID = last.id
+            // Still marks the message as "seen" above even when skipped, so
+            // it doesn't get spoken retroactively once `userHasSpoken` flips
+            // true later.
+            guard userHasSpoken else { return }
             if last.status == .failed {
                 voice.reportGenerationFailure()
             } else {
@@ -106,7 +128,10 @@ struct LiveVoiceConversationView: View {
         // an actual transcript to show (per Dan 2026-07-16).
         case .listening: voice.liveTranscript
         case .thinking: "Thinking…"
-        case .speaking: "Speaking…"
+        // Blank instead of "Speaking…" — same reasoning as above: the
+        // waveform animates while the agent talks, so the label is
+        // redundant (per Dan 2026-07-19).
+        case .speaking: ""
         case .denied: "Microphone and Speech Recognition access are needed for voice mode. Enable them in Settings."
         case .error(let message): message
         }

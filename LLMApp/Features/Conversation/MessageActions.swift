@@ -30,8 +30,14 @@ struct MessageActions {
     var onSendElsewhere: (String, [Attachment]) -> Void = { _, _ in }
     /// Jumps straight into voice mode from somewhere other than the
     /// composer's own mic button — same entry point `PromptComposer.onMicTap`
-    /// uses.
-    var onStartVoice: () -> Void = {}
+    /// uses. The optional attachment (currently only `EditImagePreviewView`'s
+    /// scoped image) isn't sent immediately — it rides along with whatever
+    /// the user says *first* in the voice session (see
+    /// `ConversationViewModel.pendingVoiceAttachment`), so exiting voice mode
+    /// without ever speaking leaves the conversation untouched instead of
+    /// having silently sent an image and generated a reply nobody asked for
+    /// (per Dan 2026-07-19).
+    var onStartVoice: (Attachment?) -> Void = { _ in }
 
     static func standard(viewModel: ConversationViewModel) -> MessageActions {
         MessageActions(

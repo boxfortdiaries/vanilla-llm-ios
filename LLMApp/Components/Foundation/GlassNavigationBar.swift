@@ -36,6 +36,13 @@ struct GlassNavigationBar: View {
         /// for a file — mirrors `MenuItem.shareItem`, which only supports
         /// `String` (text sharing); this covers sharing an actual file URL.
         var shareURL: URL? = nil
+        /// Supplied up front so the system share sheet's header (thumbnail +
+        /// filename) renders in its final state immediately — omitting this
+        /// forces iOS to derive the preview asynchronously after the sheet
+        /// opens, which visibly shifts the header a couple points as it
+        /// swaps from a placeholder to the real thumbnail (per Dan
+        /// 2026-07-19).
+        var sharePreview: SharePreview<Image, Never>? = nil
     }
 
     struct MenuItem: Identifiable {
@@ -143,8 +150,13 @@ struct GlassNavigationBar: View {
     @ViewBuilder
     private func trailingButton(_ action: Action) -> some View {
         if let shareURL = action.shareURL {
-            ShareLink(item: shareURL) { glassIcon(action.icon) }
-                .accessibilityLabel(action.label)
+            if let sharePreview = action.sharePreview {
+                ShareLink(item: shareURL, preview: sharePreview) { glassIcon(action.icon) }
+                    .accessibilityLabel(action.label)
+            } else {
+                ShareLink(item: shareURL) { glassIcon(action.icon) }
+                    .accessibilityLabel(action.label)
+            }
         } else if let menu = action.menu {
             Menu {
                 ForEach(menu) { item in
