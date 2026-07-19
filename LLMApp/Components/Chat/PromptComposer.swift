@@ -143,14 +143,31 @@ struct PromptComposer: View {
         // with the field the way adjacent Liquid Glass shapes normally do
         // when close together — worth it only if this actually fixes it.
         HStack(alignment: .bottom, spacing: 12) {
+            // The attach button, omitted entirely (not just hidden) during a
+            // live call — no attach flow makes sense mid-conversation, and
+            // ChatGPT's own voice UI doesn't show one either. The mute
+            // toggle takes its place on the leading edge instead, rather
+            // than sitting in the field/end-call row (per Dan 2026-07-19).
             GlassEffectContainer(spacing: 12) {
-                leadingButton
+                if isVoiceActive {
+                    voiceMuteButton
+                } else {
+                    leadingButton
+                }
             }
             GlassEffectContainer(spacing: 12) {
                 HStack(alignment: .bottom, spacing: 12) {
                     if isVoiceActive {
+                        // Shares `messageField`'s own id (was a separate
+                        // "voiceField" id) so the container morphs the field
+                        // shape into the ghost field instead of tearing one
+                        // down and building the other from scratch, which
+                        // read as a hitch on the placeholder text entering
+                        // voice mode (per Dan 2026-07-19). `dictationField`
+                        // keeps its own separate id below — no hitch was
+                        // reported there, and changing it isn't needed.
                         voiceGhostField
-                            .glassEffectID("voiceField", in: glassNamespace)
+                            .glassEffectID("messageField", in: glassNamespace)
                     } else if isDictating {
                         dictationField
                             .glassEffectID("dictationField", in: glassNamespace)
@@ -158,15 +175,18 @@ struct PromptComposer: View {
                         messageField
                     }
 
-                    // Mic sits between the field and the end-call button (per
-                    // Dan) — a genuinely new fourth slot in voice mode, not a
-                    // replacement of anything that exists in text mode.
-                    if isVoiceActive {
-                        voiceMuteButton
-                    }
-
+                    // Shared id (applied here, not inside either view, since
+                    // `SendButton` and `voiceEndCallButton` are separate view
+                    // types with no way to share one internally) — despite
+                    // `voiceEndCallButton`'s own doc comment already
+                    // describing it as "a state change of that button, not a
+                    // separate one," nothing had actually made that true, so
+                    // tapping the mic left it stuck in a pressed-looking
+                    // state before hitching into the end-call button (per Dan
+                    // 2026-07-19).
                     if isVoiceActive {
                         voiceEndCallButton
+                            .glassEffectID("sendButton", in: glassNamespace)
                     } else {
                         SendButton(
                             isGenerating: isGenerating, canSend: canSend,
@@ -174,6 +194,7 @@ struct PromptComposer: View {
                             onStop: onStop,
                             onMicTap: { isFocused = false; onMicTap() }
                         )
+                        .glassEffectID("sendButton", in: glassNamespace)
                     }
                 }
             }
@@ -548,12 +569,13 @@ struct PromptComposer: View {
         }
     }
 
-    /// Mute toggle — a genuinely new fourth slot that only exists in voice
-    /// mode (per Dan 2026-07-16: sits between the field and the end-call
-    /// button, with the attach button staying put on the leading edge
-    /// unchanged). Same 44x44 glass-circle treatment as every other primary
-    /// button here for visual consistency, even though it isn't standing in
-    /// for anything in the text-mode layout.
+    /// Mute toggle, only in voice mode — takes over the leading-edge slot
+    /// the attach button occupies in text mode, rather than adding a new
+    /// slot next to the end-call button (per Dan 2026-07-19; originally sat
+    /// between the field and end-call with the attach button left in place,
+    /// per Dan 2026-07-16, before the attach button was removed from voice
+    /// mode entirely). Same 44x44 glass-circle treatment as every other
+    /// primary button here for visual consistency.
     private var voiceMuteButton: some View {
         Button(action: onToggleVoiceMute) {
             Image(systemName: isVoiceMuted ? "mic.slash.fill" : "mic.fill")
@@ -564,15 +586,27 @@ struct PromptComposer: View {
         }
         .glassEffect(.regular.interactive(), in: .circle)
         .accessibilityLabel(isVoiceMuted ? "Unmute" : "Mute")
+        // Same identity `leadingButton`'s own two states already share — this
+        // is now a third occupant of the same container slot (per Dan
+        // 2026-07-19), and without a shared id the container can't morph
+        // into it: it tears the attach button's glass surface down and
+        // builds this one from scratch, which read as a hitch entering
+        // voice mode (per Dan 2026-07-19, same root cause as the
+        // `leadingButton` doc comment's own "fresh construction" glitches).
+        .glassEffectID("leadingButton", in: glassNamespace)
     }
 
     /// The field's voice-mode state — same corner radius/height as a
     /// single-line `messageField`, dimmed and inert-looking since tapping it
-    /// does one thing: exit back to text. Kept as a separate `glassEffectID`
-    /// from `messageField` (matching how `attachmentSourceRow` already gets
-    /// its own id rather than reusing `messageField`'s) so the container
-    /// morphs cleanly rather than two different tap behaviors sharing an
-    /// identity.
+    /// does one thing: exit back to text. Shares `messageField`'s own
+    /// `glassEffectID` at the call site (was kept separate originally, on
+    /// the theory that two different tap behaviors shouldn't share an
+    /// identity) — sharing the id is what actually lets the container morph
+    /// the shape between them; keeping them separate was what caused the
+    /// placeholder text to visibly hitch entering voice mode instead (per
+    /// Dan 2026-07-19). The `Button`'s own tap handling is unaffected either
+    /// way — `glassEffectID` only governs the glass shape's render/morph
+    /// identity, not gesture handling.
     private var voiceGhostField: some View {
         Button(action: onExitVoice) {
             HStack {
@@ -595,8 +629,12 @@ struct PromptComposer: View {
         .accessibilityLabel("Switch to text")
     }
 
-    /// Same slot as `SendButton`, same size/glass-tint treatment — a state
-    /// change of that button, not a separate one.
+    /// Same slot as `SendButton`, same size/glass-tint treatment — meant to
+    /// read as a state change of that button, not a separate one, but
+    /// nothing actually gave them a shared identity until the call site
+    /// added a matching `glassEffectID` (per Dan 2026-07-19) — without it,
+    /// tapping the mic left `SendButton` stuck looking pressed before
+    /// hitching into this view as a freshly-built glass surface.
     private var voiceEndCallButton: some View {
         Button(action: onEndVoice) {
             Image(systemName: "xmark")

@@ -13,6 +13,16 @@ final class NavigationCoordinator {
     private let store: ConversationStore
     var currentConversationID: UUID
     var isSidebarOpen = false
+    /// Bumped on every `newChat()` call, including the "reuse the current
+    /// empty conversation" branch that leaves `currentConversationID`
+    /// unchanged — `ChatCard` watches this (alongside `currentConversationID`
+    /// itself) to end an active voice call, since that branch wouldn't
+    /// otherwise fire the "real switch" `.onChange` at all, leaving a call
+    /// running on an empty conversation still active after "New Chat" was
+    /// tapped (per Dan 2026-07-19: it should always mean "show me the chat
+    /// experience," regardless of whether a new conversation object was
+    /// actually created).
+    private(set) var newChatToken = UUID()
 
     init(router: Router, store: ConversationStore, initialConversationID: UUID) {
         self.router = router
@@ -37,6 +47,7 @@ final class NavigationCoordinator {
     /// Start a fresh chat. Reuses the current conversation if it's already
     /// empty rather than spawning blank duplicates.
     func newChat() {
+        newChatToken = UUID()
         if let current = store.conversation(id: currentConversationID), current.messages.isEmpty {
             isSidebarOpen = false
             return

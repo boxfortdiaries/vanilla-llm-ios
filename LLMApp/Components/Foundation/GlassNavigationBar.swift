@@ -43,6 +43,18 @@ struct GlassNavigationBar: View {
         /// swaps from a placeholder to the real thumbnail (per Dan
         /// 2026-07-19).
         var sharePreview: SharePreview<Image, Never>? = nil
+        /// Overrides the identity `trailingButton`'s `ForEach` keys on below
+        /// — set when two actions in different app states are logically the
+        /// "same slot" despite showing a different icon (e.g. `RootView`'s
+        /// "More" swapping to "Voice Options" when a call starts), so the
+        /// glass capsule morphs between them instead of tearing one down and
+        /// building the other from scratch, which read as a hitch entering
+        /// voice mode (per Dan 2026-07-19). nil (default) keys on `icon`
+        /// alone, unchanged for every other caller.
+        var morphID: String? = nil
+        /// The actual `ForEach` key — `morphID` if the caller set one,
+        /// otherwise `icon`.
+        var stableKey: String { morphID ?? icon }
     }
 
     struct MenuItem: Identifiable {
@@ -122,12 +134,13 @@ struct GlassNavigationBar: View {
             // that action its own `GlassEffectContainer` the way
             // `PromptComposer` does, rather than sharing this one.
             HStack(spacing: 0) {
-                // Keyed on the (stable) icon, not `Action.id` — the actions are
-                // rebuilt with fresh UUIDs every render, so a UUID key would
-                // re-create the pill each time and it could never animate. A
-                // stable key lets a segment insert/remove while the shared glass
+                // Keyed on `stableKey` (icon, or an explicit `morphID`
+                // override), not `Action.id` — the actions are rebuilt with
+                // fresh UUIDs every render, so a UUID key would re-create the
+                // pill each time and it could never animate. A stable key
+                // lets a segment insert/remove while the shared glass
                 // capsule morphs circle↔pill around it.
-                ForEach(Array(trailingActions.enumerated()), id: \.element.icon) { _, action in
+                ForEach(Array(trailingActions.enumerated()), id: \.element.stableKey) { _, action in
                     trailingButton(action)
                         .transition(.scale.combined(with: .opacity))
                 }

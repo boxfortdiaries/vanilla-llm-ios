@@ -114,8 +114,12 @@ struct RootView: View {
                 }
             }
             // Invisible tap-catcher (chat stays fully opaque — no dimming
-            // scrim). Applied BEFORE the offset so it travels with the chat and
-            // covers the shifted chat bounds, not the exposed menu.
+            // scrim; a 60%-opacity version was tried per Dan 2026-07-19 but
+            // reverted the same day after it triggered the menu button's own
+            // glass "jiggle" on tap-open, and it wasn't worth chasing
+            // further — see this file's git history around 2026-07-19 if
+            // revisiting). Applied BEFORE the offset so it travels with the
+            // chat and covers the shifted chat bounds, not the exposed menu.
             .overlay {
                 if coordinator.isSidebarOpen {
                     Color.clear
@@ -247,7 +251,18 @@ private struct ChatCard: View {
                     title: nil,
                     leadingAction: .init(icon: "line.3.horizontal", label: "Menu") {
                         UIApplication.shared.dismissKeyboard()
-                        withAnimation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion)) {
+                        // `voiceDismissAnim`, not `.standard` — this toggles
+                        // the same `coordinator.isSidebarOpen` that
+                        // `RootView`'s own blanket `.animation(anim, value:)`
+                        // is already watching with the `.smooth` curve; using
+                        // `.standard` (a spring with a slight bounce) here
+                        // raced that against the blanket modifier's own
+                        // animation of the same change, which read as a
+                        // bounce/hitch on the nav bar's glass buttons — only
+                        // reachable by tapping the menu button, since a drag
+                        // release already goes through the matching `.smooth`
+                        // curve directly (per Dan 2026-07-19).
+                        withAnimation(voiceDismissAnim) {
                             coordinator.toggleSidebar()
                         }
                     },
@@ -274,6 +289,16 @@ private struct ChatCard: View {
         // explicitly and animated, rather than letting `ConversationView`'s
         // `.id(currentID)` rebuild silently kill it with no transition.
         .onChange(of: currentID) { _, _ in
+            guard voiceRoute != nil else { return }
+            withAnimation(voiceDismissAnim) { voiceRoute = nil }
+        }
+        // Also watches `newChatToken`, not just `currentID` — `newChat()`'s
+        // "reuse the current empty conversation" branch never changes
+        // `currentID`, so tapping "New Chat" while a call is running on an
+        // already-empty conversation wouldn't otherwise end it at all; the
+        // drawer would just close back onto the still-active voice screen
+        // (per Dan 2026-07-19).
+        .onChange(of: coordinator.newChatToken) { _, _ in
             guard voiceRoute != nil else { return }
             withAnimation(voiceDismissAnim) { voiceRoute = nil }
         }
@@ -314,6 +339,11 @@ private struct ChatCard: View {
         // mode too.
         if voiceRoute != nil {
             return [
+                // `morphID` matches "More" below — same trailing-pill slot,
+                // different icon/menu depending on mode, so the glass
+                // capsule morphs between them on entering/exiting voice mode
+                // instead of tearing one down and building the other from
+                // scratch (per Dan 2026-07-19).
                 .init(icon: "slider.horizontal.3", label: "Voice Options", menu: [
                     .init(title: "Change Voice", icon: "person.wave.2") {
                         // Same spring token as every other voiceRoute change
@@ -330,7 +360,7 @@ private struct ChatCard: View {
                     ) {
                         showCaptions.toggle()
                     },
-                ]),
+                ], morphID: "trailingMenu"),
             ]
         }
         return [
@@ -345,7 +375,7 @@ private struct ChatCard: View {
                 .init(title: "Share", icon: "square.and.arrow.up", shareItem: shareText(for: currentID)),
                 .init(title: "Archive", icon: "archivebox", handler: coordinator.newChat),
                 .init(title: "Delete", icon: "trash", role: .destructive, handler: coordinator.newChat),
-            ]),
+            ], morphID: "trailingMenu"),
         ].compactMap { $0 }
     }
 }
