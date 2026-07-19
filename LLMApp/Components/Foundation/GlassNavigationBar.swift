@@ -99,6 +99,21 @@ struct GlassNavigationBar: View {
             // Trailing actions share one glass pill (capsule): a single action
             // reads as a circle, two as a pill. glassStyle keeps it jiggle-free
             // during a search reveal, same as the leading button.
+            //
+            // Deliberately NOT a `Menu` action sharing this pill with a
+            // sibling — a `GlassEffectContainer` that ever contains a `Menu`
+            // stays glitchy for its own lifetime after that Menu has been
+            // presented once, and the glitch reaches every sibling sharing
+            // the container, not just the Menu's own button (see
+            // `PromptComposer.leadingButton`'s doc comment, which hit and
+            // fixed the same thing — that one couldn't drop the Menu, so it
+            // got its own container instead; per Dan 2026-07-19,
+            // `EditImagePreviewView` could just drop its own single-item
+            // Menu for a plain button, avoiding the bug at the source and
+            // keeping the merged-pill look). If a future caller needs an
+            // actual multi-item Menu sharing this pill with a sibling, give
+            // that action its own `GlassEffectContainer` the way
+            // `PromptComposer` does, rather than sharing this one.
             HStack(spacing: 0) {
                 // Keyed on the (stable) icon, not `Action.id` — the actions are
                 // rebuilt with fresh UUIDs every render, so a UUID key would

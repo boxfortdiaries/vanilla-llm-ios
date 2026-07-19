@@ -8,6 +8,14 @@ struct UserBubble: View {
     var message: Message
     var actions: MessageActions = MessageActions()
 
+    /// Set on tap of an image in this message's own row (per Dan 2026-07-19)
+    /// — same tap-to-preview `AssistantBubble` already has for its
+    /// generated-image row, and the same for every image here regardless of
+    /// whether it's a carried-over agent image or a plain upload.
+    @State private var previewTarget: Attachment?
+
+    private var imageAttachments: [Attachment] { message.attachments.filter { $0.type == .image } }
+
     var body: some View {
         VStack(alignment: .trailing, spacing: AppSpacing.xs) {
             // Sent attachments: the composer's tray, scaled up and read-only,
@@ -23,7 +31,8 @@ struct UserBubble: View {
                     // See `AttachmentTray.availableWidth`'s doc comment — this
                     // row is hosted inside `MessageScrollHost`, where its own
                     // GeometryReader can't be trusted.
-                    availableWidth: UIScreen.main.bounds.width - AppSpacing.lg * 2
+                    availableWidth: UIScreen.main.bounds.width - AppSpacing.lg * 2,
+                    onTapImage: { attachment in previewTarget = attachment }
                 )
             }
             // No empty bubble on an attachments-only message.
@@ -40,6 +49,9 @@ struct UserBubble: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
+        .sheet(item: $previewTarget) { attachment in
+            EditImagePreviewView(attachments: imageAttachments, selected: attachment, actions: actions)
+        }
     }
 }
 

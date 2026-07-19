@@ -83,7 +83,7 @@ struct AttachmentTray: View {
         guard !attachments.isEmpty else { return 0 }
         let tileWidths = attachments.map { attachment -> CGFloat in
             guard attachment.type == .image else { return AttachmentTileView.cardMaxWidth(for: tileSize) }
-            if naturalAspect, let ratio = AttachmentTileView.imageAspectRatio(for: attachment) {
+            if naturalAspect || attachment.isAgentGenerated, let ratio = AttachmentTileView.imageAspectRatio(for: attachment) {
                 return tileSize * ratio
             }
             return tileWidth ?? tileSize

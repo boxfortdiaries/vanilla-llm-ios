@@ -18,8 +18,9 @@ struct AssistantBubble: View {
     /// `MarkdownView.blockDuration`/`blockStagger`).
     @State private var revealComplete = false
     /// Set on tap of a generated-image tile; drives the full-screen preview
-    /// (per Dan 2026-07-17). Only this call site opts into `onTapImage` —
-    /// the composer's own preview tray and a sent message's row don't.
+    /// (per Dan 2026-07-17). `UserBubble` has its own equivalent for a sent
+    /// message's own row (per Dan 2026-07-19); the composer's own in-progress
+    /// attachment tray is the only one that still doesn't opt in.
     @State private var previewTarget: Attachment?
 
     private var imageAttachments: [Attachment] { message.attachments.filter { $0.type == .image } }
@@ -34,13 +35,14 @@ struct AssistantBubble: View {
             if !imageAttachments.isEmpty {
                 AttachmentTray(
                     attachments: imageAttachments, tileSize: 112,
-                    // Sized to each image's own aspect ratio, not a fixed
-                    // 2:1 crop — this is the only row with tap-to-preview,
-                    // and the preview shows the image uncropped, so the tile
-                    // matching that shape keeps the dismiss seamless instead
-                    // of popping to the true aspect the instant it lands
-                    // back in the chat (per Dan 2026-07-18).
-                    naturalAspect: true,
+                    // No explicit `naturalAspect: true` needed here — every
+                    // image in this tray already has `isAgentGenerated` set
+                    // (see `DemoImageAttachments`), and `AttachmentTileView`
+                    // renders natural-aspect off that flag directly. Keeps
+                    // the "agent vs. uploaded" distinction readable at a
+                    // glance even after a generated image gets carried into
+                    // a user message (per Dan 2026-07-19) — the preview
+                    // sheet still crops every image to a square regardless.
                     corner: AppRadius.medium, staggerOnAppear: true, alignment: .leading,
                     // Tile 1 rests aligned with the caption's own margin
                     // below it; scrolling past the trailing tile still crops
@@ -130,7 +132,7 @@ struct AssistantBubble: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .sheet(item: $previewTarget) { attachment in
-            EditImagePreviewView(attachment: attachment, actions: actions)
+            EditImagePreviewView(attachments: imageAttachments, selected: attachment, actions: actions)
         }
     }
 }

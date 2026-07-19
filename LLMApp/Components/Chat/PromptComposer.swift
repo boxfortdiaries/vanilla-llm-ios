@@ -19,6 +19,11 @@ struct PromptComposer: View {
     var onAddAttachment: (Attachment) -> Void
     var onRemoveAttachment: (Attachment) -> Void
     var onMicTap: () -> Void = {}
+    /// False hides "File" from the attach menu, leaving Photo Library and
+    /// Camera — the image preview's own composer opts out (per Dan
+    /// 2026-07-19), since a file doesn't make sense as a reference for an
+    /// image edit. True (default) keeps the main chat composer unchanged.
+    var allowsFileAttachment: Bool = true
     /// Live voice call in progress (per Dan 2026-07-16: the voice screen's
     /// input+CTA should be *the same component* as the text composer, just a
     /// different state — not a separate hand-built view — so they share
@@ -449,6 +454,17 @@ struct PromptComposer: View {
     /// itself, but because `cancelDictation()` was animating on a *different*
     /// token than `ConversationView`'s own voice-mode transition; see that
     /// function's doc comment for the actual fix.
+    ///
+    /// Known issue (per Dan 2026-07-19, accepted as the lesser cost): this
+    /// button's glass background doesn't restore immediately after the Menu
+    /// dismisses — `Menu` registers its own `UIContextMenuInteraction`
+    /// unconditionally, and that interaction's dismiss-time sync call
+    /// ("Called -[UIContextMenuInteraction updateVisibleMenuWithBlock:] while
+    /// no context menu is visible. This won't do anything.", confirmed via
+    /// console log) leaves it stuck not-yet-restored. A custom `.glassEffect`
+    /// dropdown avoids that interaction entirely and was built and tried, but
+    /// rejected outright — worse than the bug it fixed. Reverted; see this
+    /// file's git history around 2026-07-19 if revisiting.
     @ViewBuilder
     private var leadingButton: some View {
         if isDictating {
@@ -460,9 +476,12 @@ struct PromptComposer: View {
             // iOS stacks an upward menu with the first-defined item closest
             // to the anchor. Reversing the source order here is what makes
             // it read top-to-bottom as Photo Library, Camera, File on screen
-            // (per Dan 2026-07-16).
+            // (per Dan 2026-07-16). Dropping File just leaves the other two
+            // in the same relative order — no reordering needed.
             Menu {
-                Button { showFileImporter = true } label: { Label("File", systemImage: "doc") }
+                if allowsFileAttachment {
+                    Button { showFileImporter = true } label: { Label("File", systemImage: "doc") }
+                }
                 Button {
                     if UIImagePickerController.isSourceTypeAvailable(.camera) { showCamera = true }
                     else { cameraUnavailable = true }
@@ -474,7 +493,7 @@ struct PromptComposer: View {
                     .foregroundStyle(AppColor.Tint.cta)
                     .frame(width: 44, height: 44)
             }
-            .glassEffect(.regular.interactive(), in: .circle)
+            .glassEffect(.regular, in: .circle)
             .accessibilityLabel("Attach file")
             .glassEffectID("leadingButton", in: glassNamespace)
         }

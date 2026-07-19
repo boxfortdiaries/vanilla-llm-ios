@@ -20,7 +20,10 @@ import UIKit
 /// breaks SwiftUI's geometry APIs; see `AttachmentTray.availableWidth`'s doc
 /// comment.)
 struct EditImagePreviewView: View {
-    let attachment: Attachment
+    /// Every image attachment from the same message's own h-scroll row (per
+    /// Dan 2026-07-19) — swiping here pages through the same set, not just
+    /// the one that was tapped.
+    let attachments: [Attachment]
     /// Routes Send/mic-tap back into the real conversation (per Dan
     /// 2026-07-19: this screen isn't its own conversation, it just borrows
     /// the composer) — no default, so a call site can't silently forget to
@@ -30,13 +33,23 @@ struct EditImagePreviewView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var editText = ""
     @State private var editAttachments: [Attachment] = []
-    /// Gates `.preferredColorScheme` (see its own doc comment below) — false
-    /// until the sheet's own presentation spring has visually settled, so
-    /// only system UI a user actually triggers afterward (Share, the
-    /// attach-source menu, "Save to Photos") picks it up.
-    @State private var isFullyPresented = false
+    /// Which page `TabView` is showing — starts on whichever tile was
+    /// actually tapped, not always the first image.
+    @State private var selectedID: UUID
 
-    private var image: UIImage? {
+    init(attachments: [Attachment], selected: Attachment, actions: MessageActions) {
+        self.attachments = attachments
+        self.actions = actions
+        _selectedID = State(initialValue: selected.id)
+    }
+
+    /// Drives the header's Share action — the currently visible page, not
+    /// necessarily the tile that was originally tapped.
+    private var selectedAttachment: Attachment? {
+        attachments.first { $0.id == selectedID }
+    }
+
+    private func image(for attachment: Attachment) -> UIImage? {
         guard let url = attachment.url else { return nil }
         return UIImage(contentsOfFile: url.path)
     }
@@ -44,30 +57,56 @@ struct EditImagePreviewView: View {
     var body: some View {
         ZStack {
             AppColor.Background.primary.ignoresSafeArea()
-            VStack(spacing: 0) {
-                Spacer(minLength: 0)
-                if let image {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .clipShape(RoundedRectangle(cornerRadius: AppRadius.large))
-                        .padding(.horizontal, AppSpacing.lg)
+            TabView(selection: $selectedID) {
+                ForEach(attachments) { attachment in
+                    VStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        if let image = image(for: attachment) {
+                            // Square crop, same shape as the chat tiles (per
+                            // Dan 2026-07-19) — `.scaledToFit` on the true
+                            // aspect ratio used to letterbox a lot of empty
+                            // space above/below a landscape photo; a square
+                            // sized to the full available width fills the
+                            // sheet more.
+                            Color.clear
+                                .aspectRatio(1, contentMode: .fit)
+                                .overlay {
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .scaledToFill()
+                                }
+                                .clipShape(RoundedRectangle(cornerRadius: AppRadius.large))
+                                .padding(.horizontal, AppSpacing.lg)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .tag(attachment.id)
                 }
-                Spacer(minLength: 0)
             }
+            .tabViewStyle(.page(indexDisplayMode: .never))
         }
         .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .top, spacing: 0) {
             GlassNavigationBar(
                 title: nil,
                 leadingAction: .init(icon: "xmark", label: "Close") { dismiss() },
+                // A plain button, not a single-item `menu:` wrapped in an
+                // overflow "More" icon — `GlassNavigationBar`'s trailing pill
+                // shares one glass container across its actions, and a `Menu`
+                // sharing that container flickers permanently once it's been
+                // opened once (see its own doc comment). One action doesn't
+                // need a menu to hide behind anyway.
                 trailingActions: [
-                    .init(icon: "square.and.arrow.up", label: "Share", shareURL: attachment.url),
-                    .init(icon: "ellipsis", label: "More", menu: [
-                        .init(title: "Save to Photos", icon: "square.and.arrow.down") {},
-                    ]),
+                    .init(icon: "square.and.arrow.up", label: "Share", shareURL: selectedAttachment?.url),
+                    .init(icon: "square.and.arrow.down", label: "Save to Photos", handler: {}),
                 ]
             )
+            // `GlassNavigationBar`'s own default top padding is `.md` (16pt);
+            // `ProfileSheet`'s close button — the other bottom sheet's header
+            // — sits at `.lg` (24pt) from the top. Scoped here rather than
+            // changing `GlassNavigationBar`'s shared default, which other
+            // screens rely on (per Dan 2026-07-19).
+            .padding(.top, AppSpacing.xs)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             PromptComposer(
@@ -78,9 +117,25 @@ struct EditImagePreviewView: View {
                 // Sending or tapping the mic from here isn't a separate
                 // conversation — it hands off to the real one underneath
                 // (per Dan 2026-07-19) and closes this sheet, landing the
-                // user back on whichever experience they asked for.
+                // user back on whichever experience they asked for. Either
+                // way, the image the user had scoped travels along as an
+                // attachment — same shape as a manually-attached single
+                // image send — so the chat history shows what they were
+                // actually looking at when they asked for a change.
                 onSend: {
-                    actions.onSendElsewhere(editText, editAttachments)
+                    var scoped = selectedAttachment
+                    // Square, not landscape, but only here — when the
+                    // scoped image is joined by other manually-attached
+                    // images in the same send, a landscape tile sitting
+                    // among freshly-attached square ones reads as
+                    // inconsistent, more like "one of a batch" than "the
+                    // thing being discussed" (per Dan 2026-07-19). Sent
+                    // alone (or with just typed text), it stays landscape.
+                    if !editAttachments.isEmpty {
+                        scoped?.isAgentGenerated = false
+                    }
+                    let sent = ([scoped].compactMap { $0 }) + editAttachments
+                    actions.onSendElsewhere(editText, sent)
                     dismiss()
                 },
                 onStop: {},
@@ -89,9 +144,15 @@ struct EditImagePreviewView: View {
                     editAttachments.removeAll { $0.id == attachment.id }
                 },
                 onMicTap: {
+                    if let selectedAttachment {
+                        actions.onSendElsewhere("", [selectedAttachment])
+                    }
                     actions.onStartVoice()
                     dismiss()
-                }
+                },
+                // A file doesn't make sense as an image-edit reference (per
+                // Dan 2026-07-19) — Photo Library and Camera only here.
+                allowsFileAttachment: false
             )
         }
         .presentationDragIndicator(.hidden)
@@ -104,37 +165,58 @@ struct EditImagePreviewView: View {
         // way without touching UIKit at all.
         .colorScheme(.dark)
         // But `.colorScheme` alone doesn't reach UIKit-presented children
-        // (Share sheet, the attach button's source menu, the "Save to
-        // Photos" menu item) — those read the hosting controller's actual
-        // interface style, not this SwiftUI environment, so they showed up
-        // light against an otherwise-dark screen (per Dan 2026-07-19). Delay
-        // the override until just after the open transition settles
-        // (`contextMenuDelay`, previously unused) rather than applying it
-        // from the very first frame — a fresh hosting controller doesn't
-        // pick up `.preferredColorScheme` in time for the presentation's own
-        // snapshot, which is the exact race that caused the flash above; a
-        // brand-new user tap can't land before this delay elapses, and
-        // dismissing an already-settled (already-dark) screen isn't the same
-        // race, so this only needs to guard the open direction.
-        .preferredColorScheme(isFullyPresented ? .dark : nil)
-        .onAppear {
-            Task {
-                try? await Task.sleep(for: .seconds(AppAnimation.contextMenuDelay))
-                isFullyPresented = true
-            }
-        }
+        // (the Share sheet, the attach button's source menu) — those read
+        // the hosting controller's actual interface style, not this SwiftUI
+        // environment, so they rendered light against an otherwise-dark
+        // screen. `.preferredColorScheme` reaches them but goes through
+        // SwiftUI's own `@State`/environment re-render path to do it — tried
+        // first, gated behind a delayed `@State` flip to dodge the open
+        // transition's flash, but every re-render it caused (on each
+        // Share-sheet/attach-menu dismissal, well after that flip had
+        // already settled) visibly disrupted this screen's glass buttons
+        // (per Dan 2026-07-19) — the same "fresh construction" class of
+        // glitch already seen elsewhere in this app, just triggered by a
+        // SwiftUI re-render instead of a view being freshly built.
+        // `DarkInterfaceStyleOverride` below sets the same UIKit property
+        // directly, once, outside SwiftUI's render graph entirely, so it has
+        // nothing to re-diff.
+        .background(DarkInterfaceStyleOverride())
     }
+}
+
+/// Sets the presented sheet's own `overrideUserInterfaceStyle` to `.dark`
+/// via a raw, one-time UIKit mutation — see `EditImagePreviewView.body`'s own
+/// doc comment for why this replaced a SwiftUI `@State`-driven
+/// `.preferredColorScheme`. Delayed past the sheet's own open transition
+/// (`contextMenuDelay`) for the same reason that attempt was too: a fresh
+/// hosting controller doesn't have this override in place for the
+/// presentation's own opening snapshot, which is what caused a black/white
+/// window flash the very first time this was tried undelayed.
+private struct DarkInterfaceStyleOverride: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let probe = UIView()
+        probe.isUserInteractionEnabled = false
+        probe.backgroundColor = .clear
+        DispatchQueue.main.asyncAfter(deadline: .now() + AppAnimation.contextMenuDelay) { [weak probe] in
+            var responder: UIResponder? = probe
+            while let current = responder, !(current is UIViewController) {
+                responder = current.next
+            }
+            (responder as? UIViewController)?.overrideUserInterfaceStyle = .dark
+        }
+        return probe
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
 }
 
 private struct EditImagePreviewPreview: View {
     var body: some View {
-        EditImagePreviewView(
-            attachment: Attachment(
-                type: .image, name: "demo-image-1.jpg",
-                url: Bundle.main.url(forResource: "demo-image-1", withExtension: "jpg")
-            ),
-            actions: MessageActions()
+        let demo = Attachment(
+            type: .image, name: "demo-image-1.jpg",
+            url: Bundle.main.url(forResource: "demo-image-1", withExtension: "jpg")
         )
+        EditImagePreviewView(attachments: [demo], selected: demo, actions: MessageActions())
     }
 }
 

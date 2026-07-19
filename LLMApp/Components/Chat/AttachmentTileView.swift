@@ -59,6 +59,13 @@ struct AttachmentTileView: View {
     private var iconSize: CGFloat { tileSize * 0.643 }
     private var cardMaxWidth: CGFloat { Self.cardMaxWidth(for: tileSize) }
     private var isLarge: Bool { tileSize >= 88 }
+    /// `naturalAspect` is a tray-wide default; an agent-originated image
+    /// (see `Attachment.isAgentGenerated`) renders natural-aspect regardless
+    /// of that default, so it still reads as "an agent image" even inside a
+    /// tray of otherwise square-cropped user uploads (per Dan 2026-07-19).
+    /// Doesn't gate tap-ability — every tile with `onTapImage` set is
+    /// tappable, agent-originated or not.
+    private var rendersNaturalAspect: Bool { naturalAspect || attachment.isAgentGenerated }
 
     /// A file card's width at a given tile size — exposed so `AttachmentTray`
     /// can compute a row's total content width up front (to decide fit vs.
@@ -105,7 +112,7 @@ struct AttachmentTileView: View {
 
     @ViewBuilder
     private func sizedImage(_ image: UIImage) -> some View {
-        if naturalAspect {
+        if rendersNaturalAspect {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFit()
@@ -142,7 +149,7 @@ struct AttachmentTileView: View {
         // file's already on disk even while `simulateGenerating` fakes a
         // delay, so its real aspect is known up front and the shimmer can
         // be sized to it, rather than reveal-then-pop to the true width.
-        let width = naturalAspect ? (thumbnail.map(naturalWidth(for:)) ?? tileSize) : (tileWidth ?? tileSize)
+        let width = rendersNaturalAspect ? (thumbnail.map(naturalWidth(for:)) ?? tileSize) : (tileWidth ?? tileSize)
         return RoundedRectangle(cornerRadius: corner)
             .fill(AppColor.selection)
             .frame(width: width, height: tileSize)
