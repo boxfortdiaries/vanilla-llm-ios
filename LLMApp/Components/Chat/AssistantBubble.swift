@@ -20,20 +20,7 @@ struct AssistantBubble: View {
     /// Set on tap of a generated-image tile; drives the full-screen preview
     /// (per Dan 2026-07-17). Only this call site opts into `onTapImage` —
     /// the composer's own preview tray and a sent message's row don't.
-    /// Bundles the tapped tile's captured frame together with the
-    /// attachment (rather than a separate `@State` read inside the
-    /// `fullScreenCover` closure) — `.fullScreenCover(item:)`'s content
-    /// closure doesn't reliably see a *separate* property's freshly-written
-    /// value at presentation time, only the item itself; confirmed live via
-    /// tracing (per Dan 2026-07-18) — `sourceFrame` was reaching
-    /// `EditImagePreviewView` as `.zero` every time despite the tap handler
-    /// capturing the correct frame a line above.
-    @State private var previewTarget: ImagePreviewTarget?
-    /// Each visible tile's real on-screen frame, keyed by attachment id —
-    /// kept live via `AttachmentTray`'s `onFrameChange` so the preview's
-    /// entrance animation always has a current position to grow from, not
-    /// a stale one captured only at tap time.
-    @State private var tileFrames: [UUID: CGRect] = [:]
+    @State private var previewTarget: Attachment?
 
     private var imageAttachments: [Attachment] { message.attachments.filter { $0.type == .image } }
     private var fileAttachments: [Attachment] { message.attachments.filter { $0.type != .image } }
@@ -46,7 +33,14 @@ struct AssistantBubble: View {
             // (per Dan 2026-07-17).
             if !imageAttachments.isEmpty {
                 AttachmentTray(
-                    attachments: imageAttachments, tileSize: 112, tileWidth: 224,
+                    attachments: imageAttachments, tileSize: 112,
+                    // Sized to each image's own aspect ratio, not a fixed
+                    // 2:1 crop — this is the only row with tap-to-preview,
+                    // and the preview shows the image uncropped, so the tile
+                    // matching that shape keeps the dismiss seamless instead
+                    // of popping to the true aspect the instant it lands
+                    // back in the chat (per Dan 2026-07-18).
+                    naturalAspect: true,
                     corner: AppRadius.medium, staggerOnAppear: true, alignment: .leading,
                     // Tile 1 rests aligned with the caption's own margin
                     // below it; scrolling past the trailing tile still crops
@@ -58,22 +52,7 @@ struct AssistantBubble: View {
                     // row is hosted inside `MessageScrollHost`, where its own
                     // GeometryReader can't be trusted.
                     availableWidth: UIScreen.main.bounds.width - AppSpacing.lg * 2,
-                    onTapImage: { attachment in
-                        // Suppresses the fullScreenCover's own default
-                        // present animation (a slide-up we don't want —
-                        // see `EditImagePreviewView`'s own doc comment) so
-                        // the only visible motion is the hand-rolled
-                        // entrance transform this view drives itself.
-                        var transaction = Transaction()
-                        transaction.disablesAnimations = true
-                        withTransaction(transaction) {
-                            previewTarget = ImagePreviewTarget(
-                                attachment: attachment,
-                                sourceFrame: tileFrames[attachment.id] ?? .zero
-                            )
-                        }
-                    },
-                    onFrameChange: { attachment, frame in tileFrames[attachment.id] = frame },
+                    onTapImage: { attachment in previewTarget = attachment },
                     simulateGenerating: true
                 )
             }
@@ -150,25 +129,10 @@ struct AssistantBubble: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        // Plain `.fullScreenCover` — no system transition API involved
-        // anymore (see `EditImagePreviewView`'s doc comment for why), so
-        // there's no more reason to prefer `.sheet`'s detents/dismiss
-        // machinery over this. The `disablesAnimations` transaction on the
-        // tap handler above is what actually suppresses its default
-        // present animation.
-        .fullScreenCover(item: $previewTarget) { target in
-            EditImagePreviewView(attachment: target.attachment, sourceFrame: target.sourceFrame)
+        .sheet(item: $previewTarget) { attachment in
+            EditImagePreviewView(attachment: attachment, actions: actions)
         }
     }
-}
-
-/// Bundles a tapped attachment with its captured source frame into one
-/// value — see `previewTarget`'s doc comment for why this replaced two
-/// separate `@State` properties.
-private struct ImagePreviewTarget: Identifiable {
-    let attachment: Attachment
-    let sourceFrame: CGRect
-    var id: UUID { attachment.id }
 }
 
 #Preview("Light") {

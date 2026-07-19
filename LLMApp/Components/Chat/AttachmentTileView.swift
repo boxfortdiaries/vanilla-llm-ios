@@ -14,16 +14,18 @@ struct AttachmentTileView: View {
     /// uses.
     var tileWidth: CGFloat? = nil
     var corner: CGFloat = AppRadius.medium
+    /// When true, an image tile sizes to the image's own aspect ratio
+    /// (height pinned to `tileSize`, width follows) instead of cropping to
+    /// fill a fixed `tileWidth`/`tileSize` rect. Only the generated-image
+    /// row opts in (per Dan 2026-07-18) — it's the only tile with
+    /// tap-to-preview, and the preview shows the image uncropped at its own
+    /// aspect, so a fixed-crop tile "popped" to the true aspect the instant
+    /// the preview dismissed. `tileWidth` is ignored when this is true.
+    var naturalAspect: Bool = false
     /// Set to make an image tile tappable (e.g. tap-to-preview) — nil
     /// (default) keeps the tile a plain, non-interactive view, so callers
     /// that don't opt in (composer preview, sent-message row) are unaffected.
     var onTapImage: ((Attachment) -> Void)? = nil
-    /// Reports this tile's true on-screen frame (window coordinates)
-    /// whenever it changes — only meaningful alongside `onTapImage`, so the
-    /// tap-to-preview hero transition knows where to animate from. See
-    /// `WindowFrameReader`'s own doc comment for why this isn't a plain
-    /// `GeometryReader`.
-    var onFrameChange: ((CGRect) -> Void)? = nil
     /// When true, an image tile shows a shimmering placeholder first and
     /// reveals the real image after a random 2-4s delay — simulates images
     /// arriving from a generation backend at staggered times instead of all
@@ -32,7 +34,19 @@ struct AttachmentTileView: View {
     /// images are already on disk and should show immediately.
     var simulateGenerating: Bool = false
 
+    /// Attachment ids whose generating→revealed shimmer has already played
+    /// once this session — an agent-generated image should only ever load in
+    /// one time, not replay the shimmer every time this tile's `@State`
+    /// resets (leaving and returning to the conversation, scrolling it
+    /// off/back onscreen, reopening the image preview, etc. all rebuild this
+    /// view from scratch). Same type-level, session-scoped pattern as
+    /// `AttachmentTray.seenAttachmentIDs`, for the same reason (per Dan
+    /// 2026-07-19) — session-scoped is equivalent to "ever" today since
+    /// `ConversationStore` itself is in-memory only and resets on relaunch
+    /// anyway (see its own doc comment).
+    @MainActor private static var revealedAttachmentIDs: Set<UUID> = []
     @State private var revealed = false
+    private var alreadyRevealed: Bool { Self.revealedAttachmentIDs.contains(attachment.id) }
     /// Rolled once per tile instance, not re-rolled on every re-render —
     /// SwiftUI only evaluates a `@State` initial value on a view identity's
     /// first appearance (identity here is `attachment.id`, via `AttachmentTray`'s
@@ -53,7 +67,7 @@ struct AttachmentTileView: View {
 
     var body: some View {
         if attachment.type == .image {
-            if simulateGenerating && !revealed {
+            if simulateGenerating && !revealed && !alreadyRevealed {
                 generatingTile
                     .task {
                         try? await Task.sleep(for: .seconds(revealDelay))
@@ -61,6 +75,7 @@ struct AttachmentTileView: View {
                         withAnimation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion)) {
                             revealed = true
                         }
+                        Self.revealedAttachmentIDs.insert(attachment.id)
                     }
             } else if let image = thumbnail {
                 imageTile(image)
@@ -72,10 +87,7 @@ struct AttachmentTileView: View {
 
     @ViewBuilder
     private func imageTile(_ image: UIImage) -> some View {
-        let tile = Image(uiImage: image)
-            .resizable()
-            .scaledToFill()
-            .frame(width: tileWidth ?? tileSize, height: tileSize)
+        let tile = sizedImage(image)
             .clipShape(RoundedRectangle(cornerRadius: corner))
             .overlay {
                 RoundedRectangle(cornerRadius: corner)
@@ -86,21 +98,51 @@ struct AttachmentTileView: View {
             Button { onTapImage(attachment) } label: { tile }
                 .buttonStyle(.plain)
                 .accessibilityLabel("View image")
-                .background {
-                    if let onFrameChange {
-                        WindowFrameReader(onFrameChange: onFrameChange)
-                    }
-                }
         } else {
             tile
         }
+    }
+
+    @ViewBuilder
+    private func sizedImage(_ image: UIImage) -> some View {
+        if naturalAspect {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: naturalWidth(for: image), height: tileSize)
+        } else {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: tileWidth ?? tileSize, height: tileSize)
+        }
+    }
+
+    private func naturalWidth(for image: UIImage) -> CGFloat {
+        guard image.size.height > 0 else { return tileSize }
+        return tileSize * image.size.width / image.size.height
+    }
+
+    /// This attachment's image aspect ratio (width/height), or nil if it's
+    /// not an image or the file can't be decoded — lets `AttachmentTray`
+    /// compute a natural-aspect row's total width up front, the same way
+    /// `cardMaxWidth` already does for file cards.
+    static func imageAspectRatio(for attachment: Attachment) -> CGFloat? {
+        guard attachment.type == .image, let url = attachment.url,
+              let image = UIImage(contentsOfFile: url.path), image.size.height > 0
+        else { return nil }
+        return image.size.width / image.size.height
     }
 
     /// Shimmer technique matches `ThinkingText`'s — a light band sweeping
     /// through a masked shape on a loop — reused here masked to a rounded
     /// rect tile instead of text glyphs.
     private var generatingTile: some View {
-        let width = tileWidth ?? tileSize
+        // Matches `sizedImage`'s eventual width when natural-aspect — the
+        // file's already on disk even while `simulateGenerating` fakes a
+        // delay, so its real aspect is known up front and the shimmer can
+        // be sized to it, rather than reveal-then-pop to the true width.
+        let width = naturalAspect ? (thumbnail.map(naturalWidth(for:)) ?? tileSize) : (tileWidth ?? tileSize)
         return RoundedRectangle(cornerRadius: corner)
             .fill(AppColor.selection)
             .frame(width: width, height: tileSize)

@@ -22,6 +22,16 @@ struct MessageActions {
     var onBookmark: (Message) -> Void = { _ in }
     var onLike: (Message) -> Void = { _ in }
     var onDislike: (Message) -> Void = { _ in }
+    /// Routes a send/attach that happened somewhere other than the main
+    /// composer (currently only `EditImagePreviewView`'s own composer) into
+    /// the same `ConversationViewModel.send()` flow the real composer uses,
+    /// so it behaves identically — same thinking-state transition, same
+    /// scroll/settle timing.
+    var onSendElsewhere: (String, [Attachment]) -> Void = { _, _ in }
+    /// Jumps straight into voice mode from somewhere other than the
+    /// composer's own mic button — same entry point `PromptComposer.onMicTap`
+    /// uses.
+    var onStartVoice: () -> Void = {}
 
     static func standard(viewModel: ConversationViewModel) -> MessageActions {
         MessageActions(

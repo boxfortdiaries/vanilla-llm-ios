@@ -79,6 +79,12 @@ struct ConversationView: View {
                 presentToast("Thank you for your feedback!")
             }
         }
+        actions.onSendElsewhere = { text, attachments in
+            viewModel.composerText = text
+            viewModel.attachments = attachments
+            handleSend()
+        }
+        actions.onStartVoice = handleMicTap
         return actions
     }
 

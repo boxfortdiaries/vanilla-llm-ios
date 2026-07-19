@@ -9,7 +9,11 @@ struct AttachmentTray: View {
     var tileSize: CGFloat = 56
     /// Overrides each image tile's width, keeping `tileSize` as its height —
     /// see `AttachmentTileView.tileWidth`. nil (default) keeps square tiles.
+    /// Ignored per-tile when `naturalAspect` is true.
     var tileWidth: CGFloat? = nil
+    /// Forwarded to each `AttachmentTileView` — see its own doc comment.
+    /// Also changes how `naturalContentWidth` sizes image tiles below.
+    var naturalAspect: Bool = false
     var corner: CGFloat = AppRadius.small
     /// Gap between tiles. Defaults to the chat's 12pt; the composer passes 8pt
     /// so the gap reads proportional next to its smaller (56pt vs 112pt) tiles.
@@ -51,9 +55,6 @@ struct AttachmentTray: View {
     var availableWidth: CGFloat? = nil
     /// Forwarded to each `AttachmentTileView` — see its own doc comment.
     var onTapImage: ((Attachment) -> Void)? = nil
-    /// Forwarded to each `AttachmentTileView`'s `onFrameChange`, identifying
-    /// which attachment's frame changed (a tray can hold several tiles).
-    var onFrameChange: ((Attachment, CGRect) -> Void)? = nil
     /// Forwarded to each `AttachmentTileView` — see its own doc comment.
     var simulateGenerating: Bool = false
 
@@ -80,7 +81,13 @@ struct AttachmentTray: View {
     /// would come with it) just to learn whether the row overflows.
     private var naturalContentWidth: CGFloat {
         guard !attachments.isEmpty else { return 0 }
-        let tileWidths = attachments.map { $0.type == .image ? (tileWidth ?? tileSize) : AttachmentTileView.cardMaxWidth(for: tileSize) }
+        let tileWidths = attachments.map { attachment -> CGFloat in
+            guard attachment.type == .image else { return AttachmentTileView.cardMaxWidth(for: tileSize) }
+            if naturalAspect, let ratio = AttachmentTileView.imageAspectRatio(for: attachment) {
+                return tileSize * ratio
+            }
+            return tileWidth ?? tileSize
+        }
         return tileWidths.reduce(0, +) + CGFloat(attachments.count - 1) * tileSpacing
     }
 
@@ -148,8 +155,8 @@ struct AttachmentTray: View {
                 let shown = !staggers || appeared
                 AttachmentTileView(
                     attachment: attachment, tileSize: tileSize, tileWidth: tileWidth, corner: corner,
+                    naturalAspect: naturalAspect,
                     onTapImage: onTapImage,
-                    onFrameChange: onFrameChange.map { report in { frame in report(attachment, frame) } },
                     simulateGenerating: simulateGenerating
                 )
                     .overlay(alignment: .topTrailing) { removeButton(attachment) }
