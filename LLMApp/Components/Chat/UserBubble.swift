@@ -31,7 +31,7 @@ struct UserBubble: View {
                     // See `AttachmentTray.availableWidth`'s doc comment — this
                     // row is hosted inside `MessageScrollHost`, where its own
                     // GeometryReader can't be trusted.
-                    availableWidth: UIScreen.main.bounds.width - AppSpacing.lg * 2,
+                    availableWidth: (UIScreen.current?.bounds.width ?? 0) - AppSpacing.lg * 2,
                     onTapImage: { attachment in previewTarget = attachment }
                 )
             }

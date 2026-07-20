@@ -8,6 +8,7 @@ import UIKit
 /// sound here where that wasn't: this `UIScrollView` belongs to us outright,
 /// so there's no competing SwiftUI `ScrollView` re-asserting its own offset
 /// to lose a race against.
+@MainActor
 final class MessageScrollController {
     fileprivate weak var viewController: MessageScrollViewController?
 

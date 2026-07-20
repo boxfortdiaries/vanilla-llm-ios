@@ -36,6 +36,14 @@ settings:
     # selection back out.
     DEVELOPMENT_TEAM: HM53U2L7X8
     IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+    # Xcode's "Update to recommended settings" prompt (per Dan 2026-07-19) —
+    # added here instead of clicking "Continue" in that dialog, which would've
+    # written straight to the .xcodeproj and been wiped by the next
+    # `xcodegen generate`. Neither does anything functional yet (no build
+    # scripts to sandbox, no String Catalogs in use), just keeps the project
+    # current with Xcode's defaults.
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    STRING_CATALOG_GENERATE_SYMBOLS: YES
 targets:
   LLM-iOS:
     type: application
