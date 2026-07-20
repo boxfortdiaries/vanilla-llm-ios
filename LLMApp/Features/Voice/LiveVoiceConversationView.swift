@@ -37,7 +37,7 @@ struct LiveVoiceConversationView: View {
 
     var body: some View {
         VStack(spacing: AppSpacing.xl) {
-            WaveformView(levels: voice.levels)
+            WaveformView(levels: voice.levels, isThinking: voice.state == .thinking)
 
             if !statusLabel.isEmpty {
                 Text(statusLabel)

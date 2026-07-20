@@ -34,9 +34,17 @@ struct PromptComposer: View {
     /// slots (mic between the field and the end-call button).
     var isVoiceActive: Bool = false
     var isVoiceMuted: Bool = false
+    /// True while the agent is actively speaking a reply — swaps the
+    /// end-call button to a Stop affordance that interrupts just the
+    /// current reply (per Dan 2026-07-20) rather than exiting voice mode.
+    var isVoiceSpeaking: Bool = false
     var onToggleVoiceMute: () -> Void = {}
-    var onExitVoice: () -> Void = {}
     var onEndVoice: () -> Void = {}
+    /// Submits typed text during a live voice call (per Dan 2026-07-20) —
+    /// routes through the same final-transcript pipeline a spoken utterance
+    /// uses, so a typed reply gets answered in audio too, not redirected to
+    /// text chat the way the old ghost field's tap-to-exit used to.
+    var onSendVoiceText: (String) -> Void = { _ in }
 
     @FocusState private var isFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -203,6 +211,7 @@ struct PromptComposer: View {
                     } else {
                         SendButton(
                             isGenerating: isGenerating, canSend: canSend,
+                            isFieldFocused: isFocused,
                             onSend: { isFocused = false; onSend() },
                             onStop: onStop,
                             onMicTap: { isFocused = false; onMicTap() }
@@ -607,36 +616,38 @@ struct PromptComposer: View {
     }
 
     /// The field's voice-mode state — same corner radius/height as a
-    /// single-line `messageField`, dimmed and inert-looking since tapping it
-    /// does one thing: exit back to text. Shares `messageField`'s own
-    /// `glassEffectID` at the call site (was kept separate originally, on
-    /// the theory that two different tap behaviors shouldn't share an
-    /// identity) — sharing the id is what actually lets the container morph
-    /// the shape between them; keeping them separate was what caused the
-    /// placeholder text to visibly hitch entering voice mode instead (per
-    /// Dan 2026-07-19). The `Button`'s own tap handling is unaffected either
-    /// way — `glassEffectID` only governs the glass shape's render/morph
-    /// identity, not gesture handling.
+    /// single-line `messageField`. A real, typeable field (per Dan
+    /// 2026-07-20): submitting sends through the same final-transcript
+    /// pipeline a spoken utterance uses, so the reply comes back in audio,
+    /// same as if it had been spoken — not a redirect to text chat. Shares
+    /// `messageField`'s own `glassEffectID` at the call site so the
+    /// container morphs the shape between them instead of tearing one down
+    /// and building the other from scratch, which read as a hitch on the
+    /// placeholder text entering voice mode (per Dan 2026-07-19).
+    ///
+    /// Single-line, not `axis: .vertical` like `messageField` — a vertical
+    /// field treats Return as a newline rather than submit, and voice mode's
+    /// row has no separate send button slot (the end-call button occupies
+    /// it) to submit some other way.
     private var voiceGhostField: some View {
-        Button(action: onExitVoice) {
-            HStack {
-                Text("Ask…")
-                    .font(AppFont.body)
-                    .foregroundStyle(AppColor.Text.tertiary)
-                Spacer(minLength: 0)
-            }
+        TextField("Ask…", text: $text)
+            .font(AppFont.body)
+            .focused($isFocused)
+            .disabled(isGenerating)
+            .submitLabel(.send)
+            .onSubmit(sendVoiceText)
             .padding(.horizontal, 16)
             .padding(.vertical, 11)
             .frame(minHeight: 44)
-            // Without this, `.buttonStyle(.plain)` only hit-tests where the
-            // "Ask…" text itself renders, not the Spacer's empty space next
-            // to it — so tapping anywhere else in the field did nothing
-            // (per Dan 2026-07-18).
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .glassEffect(.regular, in: .rect(cornerRadius: 22))
-        .accessibilityLabel("Switch to text")
+            .glassEffect(.regular, in: .rect(cornerRadius: 22))
+            .accessibilityLabel("Type a message")
+    }
+
+    private func sendVoiceText() {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        onSendVoiceText(trimmed)
+        text = ""
     }
 
     /// Same slot as `SendButton`, same size/glass-tint treatment — meant to
@@ -645,15 +656,33 @@ struct PromptComposer: View {
     /// added a matching `glassEffectID` (per Dan 2026-07-19) — without it,
     /// tapping the mic left `SendButton` stuck looking pressed before
     /// hitching into this view as a freshly-built glass surface.
+    ///
+    /// Three states, not two (per Dan 2026-07-20): tapping into the ghost
+    /// field takes priority over both — shown the instant the keyboard
+    /// opens, before any text exists, same as `SendButton`'s own
+    /// `isFieldFocused` — not just once there's content. Tapping while
+    /// focused-but-empty routes to `sendVoiceText()`, which already no-ops
+    /// on empty text rather than ending the call or stopping a reply.
     private var voiceEndCallButton: some View {
-        Button(action: onEndVoice) {
-            Image(systemName: "xmark")
+        let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let showsSend = hasText || isFocused
+        let symbol = showsSend ? "arrow.up" : (isVoiceSpeaking ? "stop.fill" : "xmark")
+        let label = showsSend ? "Send message" : (isVoiceSpeaking ? "Stop" : "End voice conversation")
+        return Button {
+            if showsSend {
+                sendVoiceText()
+            } else {
+                onEndVoice()
+            }
+        } label: {
+            Image(systemName: symbol)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(AppColor.Text.inverse)
                 .frame(width: 44, height: 44)
+                .contentTransition(.symbolEffect(.replace))
         }
         .glassEffect(.regular.tint(AppColor.Tint.cta).interactive(), in: .circle)
-        .accessibilityLabel("End voice conversation")
+        .accessibilityLabel(label)
     }
 
     // MARK: Attachment ingestion

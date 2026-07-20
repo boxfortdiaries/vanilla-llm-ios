@@ -233,9 +233,29 @@ struct ConversationView: View {
             onMicTap: handleMicTap,
             isVoiceActive: voiceRoute != nil,
             isVoiceMuted: voice.isMuted,
+            isVoiceSpeaking: voice.state == .speaking,
             onToggleVoiceMute: { voice.isMuted.toggle() },
-            onExitVoice: { setVoiceRoute(nil) },
-            onEndVoice: { setVoiceRoute(nil) }
+            onEndVoice: {
+                if voice.state == .speaking {
+                    // Same cancellation the text composer's Stop button
+                    // uses (per Dan 2026-07-20: "treat it the same as if
+                    // someone stopped an agent response in chat") — a
+                    // no-op by this point since generation already finished
+                    // before speaking starts, but keeps the two Stop
+                    // affordances behaviorally identical rather than voice
+                    // mode quietly being a special case.
+                    viewModel.stop()
+                    voice.stopSpeaking(resumeListening: true)
+                } else {
+                    setVoiceRoute(nil)
+                }
+            },
+            // Reuses the exact closure a spoken utterance's final transcript
+            // already goes through (set in `LiveVoiceConversationView`'s
+            // `onAppear`) — marks the call as engaged and sends/responds the
+            // same way, so a typed reply gets answered in audio too instead
+            // of a separate code path (per Dan 2026-07-20).
+            onSendVoiceText: { voice.onFinalTranscript?($0) }
         )
         .background {
             GeometryReader { proxy in

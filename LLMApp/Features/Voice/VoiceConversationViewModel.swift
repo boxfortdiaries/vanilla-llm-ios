@@ -25,7 +25,7 @@ enum VoiceConversationState: Equatable {
 /// for a quiet room; a noisy environment would need a real VAD model.
 @Observable
 @MainActor
-final class VoiceConversationViewModel: NSObject {
+final class VoiceConversationViewModel {
     private(set) var state: VoiceConversationState = .requestingPermission
     /// Rolling window of mic amplitude samples (0...1) for the waveform. Sized
     /// per instance — the live voice screen wants a small iconic cluster, the
@@ -47,12 +47,21 @@ final class VoiceConversationViewModel: NSObject {
     private var silenceCheckTimer: Timer?
 
     private let synthesizer = AVSpeechSynthesizer()
-    private var speakingPulseTimer: Timer?
+
+    /// Dedicated engine for TTS playback, separate from `audioEngine` (mic
+    /// input) — the two never run at once (listening stops before speaking
+    /// starts and vice versa), so splitting them avoids tangling record and
+    /// playback teardown/setup into one state machine.
+    private let playbackEngine = AVAudioEngine()
+    private let playerNode = AVAudioPlayerNode()
+    private var isPlayerNodeConnected = false
+    private var pendingBufferCount = 0
+    private var synthesisFinished = false
+    private var shouldResumeListeningAfterSpeaking = true
 
     init(levelCount: Int = 9) {
         levels = Array(repeating: 0.1, count: levelCount)
-        super.init()
-        synthesizer.delegate = self
+        playbackEngine.attach(playerNode)
     }
 
     // MARK: Permissions
@@ -145,7 +154,7 @@ final class VoiceConversationViewModel: NSObject {
     private nonisolated func attachTap(to inputNode: AVAudioInputNode, format: AVAudioFormat, request: SFSpeechAudioBufferRecognitionRequest) {
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             request.append(buffer)
-            let amplitude = Self.amplitude(of: buffer)
+            let amplitude = Self.amplitude(of: buffer, gain: Self.micGain)
             Task { @MainActor in self?.handleAmplitude(amplitude) }
         }
     }
@@ -223,8 +232,11 @@ final class VoiceConversationViewModel: NSObject {
     // varies by device, and this environment can't produce/hear real voice
     // input to tune it against. Adjust on a real device if bars read too
     // flat (raise) or too pinned-at-max (lower).
-    private nonisolated static let gain = 18.0
-    private nonisolated static func amplitude(of buffer: AVAudioPCMBuffer) -> Double {
+    private nonisolated static let micGain = 18.0
+    /// Same dial-by-ear situation as `micGain`, tuned separately — TTS
+    /// playback sits at a different signal level than distant mic pickup.
+    private nonisolated static let ttsGain = 6.0
+    private nonisolated static func amplitude(of buffer: AVAudioPCMBuffer, gain: Double) -> Double {
         guard let data = buffer.floatChannelData?[0] else { return 0 }
         let frameCount = Int(buffer.frameLength)
         guard frameCount > 0 else { return 0 }
@@ -239,31 +251,133 @@ final class VoiceConversationViewModel: NSObject {
     func speak(_ text: String, voiceIdentifier: String) {
         stopListening()
         state = .speaking
+        synthesisFinished = false
+        pendingBufferCount = 0
+        shouldResumeListeningAfterSpeaking = true
+
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(identifier: voiceIdentifier)
-        synthesizer.speak(utterance)
+        synthesize(utterance, synthesizer: synthesizer, playerNode: playerNode, playbackEngine: playbackEngine)
+    }
 
-        // No real playback amplitude metering (see type-level ponytail note) —
-        // a smooth synthetic pulse while speaking is enough to read as "alive."
-        speakingPulseTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, self.state == .speaking else { return }
-                self.levels.removeFirst()
-                self.levels.append(Double.random(in: 0.3...0.9))
+    /// `write(_:toBufferCallback:)` renders speech to raw PCM instead of
+    /// auto-playing it, which is what lets us own playback ourselves — but
+    /// it hands back the *entire* utterance's audio as fast as it can
+    /// render it, well ahead of real-time, not paced to how long the speech
+    /// actually takes to play. Metering amplitude on arrival here would
+    /// front-load the whole waveform into a fraction of a second and then
+    /// sit frozen for the rest of the spoken reply. Real-time amplitude
+    /// comes from a tap on `playerNode` instead (see below), installed once
+    /// connected — the same technique `attachTap` already uses on the mic's
+    /// input node, which genuinely fires in sync with what's audible.
+    ///
+    /// Also means `AVSpeechSynthesizerDelegate`'s didStart/didFinish never
+    /// fire for this API, so completion is tracked manually via the empty
+    /// final buffer + player-node completion handlers.
+    ///
+    /// Same background-thread trap as `attachTap`/`startRecognitionTask`, one
+    /// layer stricter: `AVAudioPCMBuffer`/`AVAudioPlayerNode` aren't Sendable,
+    /// so every operation that touches the buffer or the node — connecting,
+    /// scheduling, playing — has to happen right here in the nonisolated
+    /// closure. Only Sendable primitives (`Double`, `Bool`) cross the actor
+    /// boundary into the `Task { @MainActor in }` hops below.
+    private nonisolated func synthesize(_ utterance: AVSpeechUtterance, synthesizer: AVSpeechSynthesizer, playerNode: AVAudioPlayerNode, playbackEngine: AVAudioEngine) {
+        var isConnected = false
+        synthesizer.write(utterance) { [weak self] buffer in
+            guard let pcmBuffer = buffer as? AVAudioPCMBuffer else { return }
+            if pcmBuffer.frameLength == 0 {
+                Task { @MainActor in self?.handleSynthesisFinished() }
+                return
+            }
+
+            if !isConnected {
+                playbackEngine.connect(playerNode, to: playbackEngine.mainMixerNode, format: pcmBuffer.format)
+                do {
+                    try playbackEngine.start()
+                } catch {
+                    Task { @MainActor in self?.handlePlaybackEngineFailure() }
+                    return
+                }
+                playerNode.installTap(onBus: 0, bufferSize: 1024, format: nil) { tapBuffer, _ in
+                    let amplitude = Self.amplitude(of: tapBuffer, gain: Self.ttsGain)
+                    Task { @MainActor in self?.handleNewAmplitude(amplitude) }
+                }
+                isConnected = true
+                Task { @MainActor in self?.isPlayerNodeConnected = true }
+            }
+
+            Task { @MainActor in self?.pendingBufferCount += 1 }
+            playerNode.scheduleBuffer(pcmBuffer) { [weak self] in
+                Task { @MainActor in self?.handleBufferPlaybackFinished() }
+            }
+            if !playerNode.isPlaying {
+                playerNode.play()
             }
         }
     }
 
-    func stopSpeaking() {
+    private func handlePlaybackEngineFailure() {
+        state = .error("Couldn't play the response.")
+    }
+
+    private func handleNewAmplitude(_ amplitude: Double) {
+        guard state == .speaking else { return }
+        levels.removeFirst()
+        levels.append(amplitude)
+    }
+
+    private func handleBufferPlaybackFinished() {
+        pendingBufferCount = max(0, pendingBufferCount - 1)
+        finishSpeakingIfDone()
+    }
+
+    private func handleSynthesisFinished() {
+        synthesisFinished = true
+        finishSpeakingIfDone()
+    }
+
+    private func finishSpeakingIfDone() {
+        guard synthesisFinished, pendingBufferCount == 0, state == .speaking else { return }
+        resetPlaybackEngine()
+        guard shouldResumeListeningAfterSpeaking, !isMuted else { return }
+        startListening()
+    }
+
+    private func resetPlaybackEngine() {
+        playerNode.stop()
+        if playbackEngine.isRunning {
+            playbackEngine.stop()
+        }
+        if isPlayerNodeConnected {
+            playerNode.removeTap(onBus: 0)
+            playbackEngine.disconnectNodeInput(playerNode)
+            isPlayerNodeConnected = false
+        }
+    }
+
+    /// `resumeListening` distinguishes the two callers: `teardown()` wants a
+    /// hard stop (voice mode is closing, nothing should restart), while the
+    /// composer's Stop button wants to interrupt mid-reply and immediately
+    /// go back to listening, same as `finishSpeakingIfDone`'s normal
+    /// end-of-speech path — just triggered early by the user instead of by
+    /// the synthesizer actually finishing.
+    func stopSpeaking(resumeListening: Bool = false) {
         synthesizer.stopSpeaking(at: .immediate)
+        shouldResumeListeningAfterSpeaking = false
+        synthesisFinished = true
+        pendingBufferCount = 0
+        resetPlaybackEngine()
+        if resumeListening, !isMuted {
+            startListening()
+        }
     }
 
     /// Called when the assistant's reply failed to generate — without this,
     /// nothing ever moves `state` out of `.thinking` (the caller only speaks
     /// on `.complete`), leaving the UI stuck. Mirrors the recovery shape of
-    /// `speechSynthesizer(_:didFinish:)`: show the problem briefly, then
-    /// resume listening on its own rather than requiring the user to
-    /// manually back out and retry.
+    /// `finishSpeakingIfDone`: show the problem briefly, then resume
+    /// listening on its own rather than requiring the user to manually back
+    /// out and retry.
     func reportGenerationFailure() {
         state = .error("Something went wrong. Try again?")
         Task {
@@ -276,25 +390,6 @@ final class VoiceConversationViewModel: NSObject {
     func teardown() {
         stopListening()
         stopSpeaking()
-        speakingPulseTimer?.invalidate()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-    }
-}
-
-extension VoiceConversationViewModel: AVSpeechSynthesizerDelegate {
-    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in
-            speakingPulseTimer?.invalidate()
-            speakingPulseTimer = nil
-            guard !isMuted else { return }
-            startListening()
-        }
-    }
-
-    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in
-            speakingPulseTimer?.invalidate()
-            speakingPulseTimer = nil
-        }
     }
 }

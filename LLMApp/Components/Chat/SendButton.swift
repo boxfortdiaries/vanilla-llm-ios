@@ -6,6 +6,13 @@ import SwiftUI
 struct SendButton: View {
     var isGenerating: Bool
     var canSend: Bool
+    /// True while the field has keyboard focus — shows the send affordance
+    /// as soon as the keyboard opens, before any text exists, not just once
+    /// there's content (per Dan 2026-07-20: tapping into the field is
+    /// itself the signal to shift away from the mic CTA). Tapping while
+    /// focused-but-empty still no-ops rather than sending, same as
+    /// `canSend`'s existing empty-content guard.
+    var isFieldFocused: Bool = false
     var onSend: () -> Void
     var onStop: () -> Void
     /// Default state (no text, no attachment): the CTA is a mic button that
@@ -15,8 +22,10 @@ struct SendButton: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var sendTapped = false
 
+    private var showsSend: Bool { canSend || isFieldFocused }
+
     private var symbol: String {
-        if isGenerating { "stop.fill" } else if canSend { "arrow.up" } else { "waveform" }
+        if isGenerating { "stop.fill" } else if showsSend { "arrow.up" } else { "waveform" }
     }
 
     var body: some View {
@@ -26,7 +35,7 @@ struct SendButton: View {
             } else if canSend {
                 sendTapped.toggle()
                 onSend()
-            } else {
+            } else if !isFieldFocused {
                 onMicTap()
             }
         } label: {
@@ -46,7 +55,7 @@ struct SendButton: View {
         .animation(AppAnimation.resolve(AppAnimation.fast, reduceMotion: reduceMotion), value: isGenerating)
         // Light impact confirms the send tap (spec §6.10/§18.15).
         .sensoryFeedback(.impact(weight: .light), trigger: sendTapped)
-        .accessibilityLabel(isGenerating ? "Stop generating" : (canSend ? "Send message" : "Start voice conversation"))
+        .accessibilityLabel(isGenerating ? "Stop generating" : (showsSend ? "Send message" : "Start voice conversation"))
     }
 }
 
