@@ -68,6 +68,15 @@ targets:
       - path: LLMDebugUITests
     dependencies:
       - target: LLM-iOS
+    settings:
+      base:
+        # Explicit, not just inherited from the project-level base settings
+        # above — Xcode's Signing & Capabilities UI doesn't reliably read an
+        # inherited team for a target, showing it as unselected and prompting
+        # Dan to re-pick it every time he opens the project (per Dan
+        # 2026-07-19). Same team as LLM-iOS; this target isn't shipped, so
+        # any working dev team would do.
+        DEVELOPMENT_TEAM: HM53U2L7X8
 schemes:
   LLM-iOS:
     build:

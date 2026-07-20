@@ -36,6 +36,9 @@ struct EditImagePreviewView: View {
     /// Which page `TabView` is showing — starts on whichever tile was
     /// actually tapped, not always the first image.
     @State private var selectedID: UUID
+    /// Drives `ActivityView` below instead of a `ShareLink` — see the Share
+    /// action's own comment for why (per Dan 2026-07-19).
+    @State private var isShareSheetPresented = false
 
     init(attachments: [Attachment], selected: Attachment, actions: MessageActions) {
         self.attachments = attachments
@@ -52,14 +55,6 @@ struct EditImagePreviewView: View {
     private func image(for attachment: Attachment) -> UIImage? {
         guard let url = attachment.url else { return nil }
         return UIImage(contentsOfFile: url.path)
-    }
-
-    /// Supplied to `ShareLink` up front so the system share sheet's header
-    /// doesn't have to derive it asynchronously — see `GlassNavigationBar
-    /// .Action.sharePreview`'s own doc comment for why.
-    private var selectedSharePreview: SharePreview<Image, Never>? {
-        guard let attachment = selectedAttachment, let image = image(for: attachment) else { return nil }
-        return SharePreview(attachment.name, image: Image(uiImage: image))
     }
 
     var body: some View {
@@ -105,7 +100,19 @@ struct EditImagePreviewView: View {
                 // opened once (see its own doc comment). One action doesn't
                 // need a menu to hide behind anyway.
                 trailingActions: [
-                    .init(icon: "square.and.arrow.up", label: "Share", shareURL: selectedAttachment?.url, sharePreview: selectedSharePreview),
+                    // A plain handler presenting our own `ActivityView`
+                    // below, not `Action.shareURL`'s `ShareLink` — a bare
+                    // `ShareLink` sitting in this bar's shared glass capsule
+                    // (see that struct's own doc comment on why this can't
+                    // be a `Menu` instead) presented the system share sheet
+                    // with a broken anchor: a tiny popover-style card
+                    // floating near the top of the screen instead of the
+                    // normal full sheet (per Dan 2026-07-19). Driving
+                    // `UIActivityViewController` ourselves via `.sheet`
+                    // sidesteps `ShareLink`'s own presentation logic
+                    // entirely, using the same presentation mechanism this
+                    // screen itself already trusts.
+                    .init(icon: "square.and.arrow.up", label: "Share", handler: { isShareSheetPresented = true }),
                     .init(icon: "square.and.arrow.down", label: "Save to Photos", handler: {}),
                 ]
             )
@@ -164,6 +171,11 @@ struct EditImagePreviewView: View {
                 // Dan 2026-07-19) — Photo Library and Camera only here.
                 allowsFileAttachment: false
             )
+        }
+        .sheet(isPresented: $isShareSheetPresented) {
+            if let url = selectedAttachment?.url {
+                ActivityView(activityItems: [url])
+            }
         }
         .presentationDragIndicator(.hidden)
         // `.colorScheme` (not `.preferredColorScheme`) for the content
@@ -225,6 +237,18 @@ private struct DarkInterfaceStyleOverride: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {}
+}
+
+/// Presents `UIActivityViewController` directly via `.sheet` — see the Share
+/// action's own comment above for why this replaced `ShareLink` here.
+private struct ActivityView: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
 private struct EditImagePreviewPreview: View {
