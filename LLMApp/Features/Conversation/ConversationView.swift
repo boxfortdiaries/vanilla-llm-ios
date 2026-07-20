@@ -18,8 +18,7 @@ struct ConversationView: View {
     /// rebuild) so an active call survives peeking at the sidebar and only
     /// ends on a real conversation switch — see `ChatCard`'s own doc comment
     /// on its `voiceRoute` property for the full reasoning.
-    @Binding var voiceRoute: VoiceRoute?
-    @Binding var showCaptions: Bool
+    @Binding var voiceRoute: VoiceOption?
     /// Owned here, not by `LiveVoiceConversationView` — `PromptComposer`'s
     /// mute button needs to read/drive it too, now that the composer's
     /// voice-mode state is *the same component* as its text-mode state, not
@@ -29,7 +28,6 @@ struct ConversationView: View {
     /// already support being reused across multiple voice sessions within
     /// one conversation.
     @State private var voice = VoiceConversationViewModel()
-    @AppStorage("selectedVoiceIdentifier") private var storedVoiceIdentifier = ""
     /// Bottom edge of the floating header (from ChatCard), so the list rests its
     /// content below it and the top fade lines up with it.
     var headerHeight: CGFloat = 0
@@ -93,12 +91,11 @@ struct ConversationView: View {
 
     init(
         conversationID: UUID, store: ConversationStore, aiService: AIService, headerHeight: CGFloat = 0,
-        voiceRoute: Binding<VoiceRoute?>, showCaptions: Binding<Bool>
+        voiceRoute: Binding<VoiceOption?>
     ) {
         _viewModel = State(initialValue: ConversationViewModel(conversationID: conversationID, store: store, aiService: aiService))
         self.headerHeight = headerHeight
         _voiceRoute = voiceRoute
-        _showCaptions = showCaptions
     }
 
     // The nav bar, background, and rename flow live in `ChatCard` (above the
@@ -129,17 +126,14 @@ struct ConversationView: View {
         .toolbar(.hidden, for: .navigationBar)
         // The composer is unconditional — present for both text mode and
         // live voice mode (as its own voice-active state, see
-        // `PromptComposer.isVoiceActive`), hidden only for `.picker`, which
-        // is its own self-contained screen with its own CTA. Living outside
-        // the `if let voiceRoute` branch above (rather than duplicated
-        // inside both `mainContent` and the `.live` case) is what makes it
-        // *one* `PromptComposer` instance whose state changes, not two
-        // separate views swapping — the whole point of this being a real
-        // Liquid Glass morph instead of a hard cut.
+        // `PromptComposer.isVoiceActive`). Living outside the `if let
+        // voiceRoute` branch above (rather than duplicated inside both
+        // `mainContent` and the voice branch) is what makes it *one*
+        // `PromptComposer` instance whose state changes, not two separate
+        // views swapping — the whole point of this being a real Liquid
+        // Glass morph instead of a hard cut.
         .safeAreaInset(edge: .bottom) {
-            if voiceRoute?.isLive ?? true {
-                composer
-            }
+            composer
         }
     }
 
@@ -237,7 +231,7 @@ struct ConversationView: View {
                 viewModel.attachments.removeAll { $0.id == attachment.id }
             },
             onMicTap: handleMicTap,
-            isVoiceActive: voiceRoute?.isLive ?? false,
+            isVoiceActive: voiceRoute != nil,
             isVoiceMuted: voice.isMuted,
             onToggleVoiceMute: { voice.isMuted.toggle() },
             onExitVoice: { setVoiceRoute(nil) },
@@ -252,37 +246,21 @@ struct ConversationView: View {
         }
     }
 
-    @ViewBuilder
-    private func voiceContent(for route: VoiceRoute) -> some View {
-        switch route {
-        case .picker:
-            VoicePickerView(
-                voices: VoiceOption.availableVoices(),
-                onStart: { voiceOption in
-                    storedVoiceIdentifier = voiceOption.voiceIdentifier
-                    setVoiceRoute(.live(voiceOption))
-                },
-                onCancel: { setVoiceRoute(nil) }
-            )
-        case .live(let voiceOption):
-            LiveVoiceConversationView(
-                conversationViewModel: viewModel,
-                selectedVoice: voiceOption,
-                showCaptions: $showCaptions,
-                voice: voice
-            )
-        }
+    private func voiceContent(for voiceOption: VoiceOption) -> some View {
+        LiveVoiceConversationView(
+            conversationViewModel: viewModel,
+            selectedVoice: voiceOption,
+            voice: voice
+        )
     }
 
     /// Mic tap on the composer's default-state CTA: jump straight into live
-    /// voice with the remembered voice, or the picker on first use.
+    /// voice. No picker to choose a voice first (removed per Dan 2026-07-19,
+    /// along with "Change Voice" in `ChatCard`'s trailing menu, which is now
+    /// inert) — just the first available voice every time.
     private func handleMicTap() {
-        let voices = VoiceOption.availableVoices()
-        if let remembered = voices.first(where: { $0.voiceIdentifier == storedVoiceIdentifier }) {
-            setVoiceRoute(.live(remembered))
-        } else {
-            setVoiceRoute(.picker)
-        }
+        guard let voice = VoiceOption.availableVoices().first else { return }
+        setVoiceRoute(voice)
     }
 
     /// Every `voiceRoute` mutation goes through here so the composer's
@@ -292,9 +270,9 @@ struct ConversationView: View {
     /// read as an abrupt cut rather than a spring/morph. Same token
     /// `ChatCard`'s own conversation-switch dismiss already uses, for one
     /// consistent motion language across every way voice mode starts/ends.
-    private func setVoiceRoute(_ route: VoiceRoute?) {
+    private func setVoiceRoute(_ voice: VoiceOption?) {
         withAnimation(AppAnimation.resolve(AppAnimation.slow, reduceMotion: reduceMotion)) {
-            voiceRoute = route
+            voiceRoute = voice
         }
     }
 
@@ -420,39 +398,13 @@ struct ConversationView: View {
     }
 }
 
-/// Which voice surface is showing in place of the normal chat content, if
-/// any — owned by `ChatCard`, not this view, so it survives a conversation
-/// switch long enough to animate away gracefully (see `ChatCard`'s
-/// `voiceRoute` doc comment).
-enum VoiceRoute: Identifiable, Equatable {
-    case picker
-    case live(VoiceOption)
-
-    var id: String {
-        switch self {
-        case .picker: "picker"
-        case .live(let voice): "live-\(voice.id)"
-        }
-    }
-
-    /// The composer's voice-active state only applies to `.live` — `.picker`
-    /// is its own self-contained screen with its own "Start Voice" CTA, so
-    /// the composer stays hidden entirely rather than showing redundantly
-    /// alongside it.
-    var isLive: Bool {
-        if case .live = self { return true }
-        return false
-    }
-}
-
 #Preview("Light") {
     NavigationStack {
         ConversationView(
             conversationID: SampleData.conversations[0].id,
             store: ConversationStore(),
             aiService: MockAIService(),
-            voiceRoute: .constant(nil),
-            showCaptions: .constant(false)
+            voiceRoute: .constant(nil)
         )
     }
     .environment(NavigationCoordinator(router: Router(), store: ConversationStore(), initialConversationID: SampleData.conversations[0].id))
@@ -464,8 +416,7 @@ enum VoiceRoute: Identifiable, Equatable {
             conversationID: SampleData.conversations[0].id,
             store: ConversationStore(),
             aiService: MockAIService(),
-            voiceRoute: .constant(nil),
-            showCaptions: .constant(false)
+            voiceRoute: .constant(nil)
         )
     }
     .environment(NavigationCoordinator(router: Router(), store: ConversationStore(), initialConversationID: SampleData.conversations[0].id))
@@ -478,8 +429,7 @@ enum VoiceRoute: Identifiable, Equatable {
             conversationID: SampleData.conversations[2].id,
             store: ConversationStore(),
             aiService: MockAIService(),
-            voiceRoute: .constant(nil),
-            showCaptions: .constant(false)
+            voiceRoute: .constant(nil)
         )
     }
     .environment(NavigationCoordinator(router: Router(), store: ConversationStore(), initialConversationID: SampleData.conversations[2].id))

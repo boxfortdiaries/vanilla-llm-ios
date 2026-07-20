@@ -14,7 +14,7 @@ import UIKit
 /// showing) is the one real header, and `ConversationView`'s `PromptComposer`
 /// (also swapped into its voice-mode state) is the one real composer, both
 /// unconditionally present whether this view is showing or not. This view is
-/// just the middle content — waveform, status, captions.
+/// just the middle content — waveform and status.
 ///
 /// `voice` (the mic/STT/TTS view model) is owned by `ConversationView`, not
 /// here, since `PromptComposer`'s mute button needs to read/drive it too —
@@ -22,7 +22,6 @@ import UIKit
 struct LiveVoiceConversationView: View {
     @Bindable var conversationViewModel: ConversationViewModel
     let selectedVoice: VoiceOption
-    @Binding var showCaptions: Bool
     var voice: VoiceConversationViewModel
 
     @State private var lastSpokenMessageID: UUID?
@@ -58,10 +57,6 @@ struct LiveVoiceConversationView: View {
                 .frame(height: 44)
                 .padding(.horizontal, AppSpacing.lg)
                 .background(AppColor.Tint.cta, in: .capsule)
-            }
-
-            if showCaptions {
-                captions
             }
         }
         .frame(maxHeight: .infinity)
@@ -123,11 +118,14 @@ struct LiveVoiceConversationView: View {
         // below, the waveform's already on screen and animating by this
         // point (per Dan 2026-07-16).
         case .requestingPermission: ""
-        // Blank instead of "Listening…" — the animating waveform already
-        // reads as "listening," so the label only earns its keep once there's
-        // an actual transcript to show (per Dan 2026-07-16).
-        case .listening: voice.liveTranscript
-        case .thinking: "Thinking…"
+        // Blank instead of showing the live transcript — the waveform already
+        // reads as "listening," and seeing your own words echoed back read as
+        // a bug, not a feature (per Dan 2026-07-19).
+        case .listening: ""
+        // Blank instead of "Thinking…" — same reasoning as the rest of
+        // these: the waveform is already on screen, the label was just
+        // redundant noise (per Dan 2026-07-19).
+        case .thinking: ""
         // Blank instead of "Speaking…" — same reasoning as above: the
         // waveform animates while the agent talks, so the label is
         // redundant (per Dan 2026-07-19).
@@ -135,19 +133,6 @@ struct LiveVoiceConversationView: View {
         case .denied: "Microphone and Speech Recognition access are needed for voice mode. Enable them in Settings."
         case .error(let message): message
         }
-    }
-
-    private var captions: some View {
-        VStack(spacing: AppSpacing.sm) {
-            if let userMessage = conversationViewModel.messages.last(where: { $0.role == .user }) {
-                UserBubble(message: userMessage)
-            }
-            if let assistantMessage = conversationViewModel.messages.last, assistantMessage.role == .assistant {
-                AssistantBubble(message: assistantMessage)
-            }
-        }
-        .padding(.horizontal, AppSpacing.lg)
-        .transition(.opacity)
     }
 
 }
@@ -158,7 +143,6 @@ struct LiveVoiceConversationView: View {
             conversationID: SampleData.conversations[0].id, store: ConversationStore(), aiService: MockAIService()
         ),
         selectedVoice: VoiceOption.availableVoices().first ?? VoiceOption(voiceIdentifier: "", name: "Ava", description: "Warm and encouraging", gradient: [.blue, .purple]),
-        showCaptions: .constant(false),
         voice: VoiceConversationViewModel()
     )
 }

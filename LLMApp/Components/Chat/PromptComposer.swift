@@ -148,10 +148,23 @@ struct PromptComposer: View {
             // ChatGPT's own voice UI doesn't show one either. The mute
             // toggle takes its place on the leading edge instead, rather
             // than sitting in the field/end-call row (per Dan 2026-07-19).
-            GlassEffectContainer(spacing: 12) {
-                if isVoiceActive {
+            //
+            // Each gets its own `GlassEffectContainer` (was one shared
+            // container so the two could morph into each other) — mute
+            // shared `leadingButton`'s own glass identity for that morph,
+            // but `leadingButton` contains the attach `Menu`, and per this
+            // struct's own doc comment above, any container that's *ever*
+            // held a `Menu` stays glitchy for its own lifetime — reachable
+            // as soon as a user opens the attach menu even once, mute
+            // inherited that glitch too despite never being a `Menu` itself
+            // (per Dan 2026-07-19). Trade-off: attach↔mute no longer morphs,
+            // it cuts — worth it to not have mute glitch in most real usage.
+            if isVoiceActive {
+                GlassEffectContainer(spacing: 12) {
                     voiceMuteButton
-                } else {
+                }
+            } else {
+                GlassEffectContainer(spacing: 12) {
                     leadingButton
                 }
             }
@@ -586,14 +599,11 @@ struct PromptComposer: View {
         }
         .glassEffect(.regular.interactive(), in: .circle)
         .accessibilityLabel(isVoiceMuted ? "Unmute" : "Mute")
-        // Same identity `leadingButton`'s own two states already share — this
-        // is now a third occupant of the same container slot (per Dan
-        // 2026-07-19), and without a shared id the container can't morph
-        // into it: it tears the attach button's glass surface down and
-        // builds this one from scratch, which read as a hitch entering
-        // voice mode (per Dan 2026-07-19, same root cause as the
-        // `leadingButton` doc comment's own "fresh construction" glitches).
-        .glassEffectID("leadingButton", in: glassNamespace)
+        // No longer shares `leadingButton`'s own glass identity — it's back
+        // in its own separate `GlassEffectContainer` now (see the call
+        // site's own doc comment for why: sharing one with the attach
+        // `Menu`'s container made mute inherit that container's
+        // permanent-once-a-Menu-has-shown glitch).
     }
 
     /// The field's voice-mode state — same corner radius/height as a

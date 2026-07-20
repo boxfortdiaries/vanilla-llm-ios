@@ -113,13 +113,25 @@ struct RootView: View {
                     }
                 }
             }
+            // Same reasoning, for the drawer's own menu button (per Dan
+            // 2026-07-19) — its glass jiggles on a *tap*-triggered toggle
+            // specifically (never drag), confirmed independently of the
+            // opacity fade this was originally paired with and reverted
+            // alongside — the jiggle itself is a real, separate bug on its
+            // own merits, worth fixing regardless of that feature's fate.
+            .onChange(of: coordinator.isSidebarOpen) { _, _ in
+                chatGlassInteractive = false
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(AppAnimation.slowDuration))
+                    chatGlassInteractive = true
+                }
+            }
             // Invisible tap-catcher (chat stays fully opaque — no dimming
             // scrim; a 60%-opacity version was tried per Dan 2026-07-19 but
-            // reverted the same day after it triggered the menu button's own
-            // glass "jiggle" on tap-open, and it wasn't worth chasing
-            // further — see this file's git history around 2026-07-19 if
-            // revisiting). Applied BEFORE the offset so it travels with the
-            // chat and covers the shifted chat bounds, not the exposed menu.
+            // reverted the same day — see this file's git history around
+            // 2026-07-19 if revisiting). Applied BEFORE the offset so it
+            // travels with the chat and covers the shifted chat bounds, not
+            // the exposed menu.
             .overlay {
                 if coordinator.isSidebarOpen {
                     Color.clear
@@ -218,8 +230,7 @@ private struct ChatCard: View {
     /// kill an active call with no chance to animate it away). See the
     /// `.onChange(of: coordinator.currentConversationID)` below for the actual
     /// graceful-dismiss-on-switch behavior this makes possible.
-    @State private var voiceRoute: VoiceRoute?
-    @State private var showCaptions = false
+    @State private var voiceRoute: VoiceOption?
 
     var body: some View {
         @Bindable var coordinator = container.navigationCoordinator
@@ -237,8 +248,7 @@ private struct ChatCard: View {
                     store: container.conversationStore,
                     aiService: container.aiService,
                     headerHeight: headerBottom,
-                    voiceRoute: $voiceRoute,
-                    showCaptions: $showCaptions
+                    voiceRoute: $voiceRoute
                 )
                 .id(currentID)
             }
@@ -345,21 +355,13 @@ private struct ChatCard: View {
                 // instead of tearing one down and building the other from
                 // scratch (per Dan 2026-07-19).
                 .init(icon: "slider.horizontal.3", label: "Voice Options", menu: [
-                    .init(title: "Change Voice", icon: "person.wave.2") {
-                        // Same spring token as every other voiceRoute change
-                        // (see `ConversationView.setVoiceRoute`) — this one
-                        // fires from here instead since the trailing menu
-                        // itself lives in `ChatCard`.
-                        withAnimation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion)) {
-                            voiceRoute = .picker
-                        }
-                    },
-                    .init(
-                        title: showCaptions ? "Hide Captions" : "Show Captions",
-                        icon: showCaptions ? "captions.bubble.fill" : "captions.bubble"
-                    ) {
-                        showCaptions.toggle()
-                    },
+                    // Both inert (per Dan 2026-07-19) — the screens/state
+                    // these used to drive (a voice picker, live caption
+                    // bubbles) were removed entirely, but the menu entries
+                    // stay as visible entry points for building either back
+                    // out later, per Dan's own instruction.
+                    .init(title: "Change Voice", icon: "person.wave.2") {},
+                    .init(title: "Show Captions", icon: "captions.bubble") {},
                 ], morphID: "trailingMenu"),
             ]
         }

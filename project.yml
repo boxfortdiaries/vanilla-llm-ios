@@ -27,9 +27,13 @@ settings:
     MARKETING_VERSION: "0.1"
     CURRENT_PROJECT_VERSION: "1"
     CODE_SIGN_STYLE: Automatic
-    # Without this, xcodegen regenerating the project (which happens on every
-    # `xcodegen generate`) wipes out a Team picked manually in Xcode's UI —
-    # that selection only lives in the generated .xcodeproj, never here.
+    # HM53U2L7X8 (Personal Team, danselleck82@gmail.com) — the one signing
+    # identity in the keychain (`security find-identity -v -p codesigning`).
+    # The 2026-07-19 "No Account for Team HM53U2L7X8" error wasn't actually a
+    # stale/wrong team ID — it was a stale provisioning profile; reselecting
+    # the team in Xcode's Signing & Capabilities UI regenerated a fresh one
+    # and fixed it. Kept here so `xcodegen generate` doesn't wipe the
+    # selection back out.
     DEVELOPMENT_TEAM: HM53U2L7X8
     IPHONEOS_DEPLOYMENT_TARGET: "26.0"
 targets:
