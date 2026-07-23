@@ -53,6 +53,17 @@ struct SendButton: View {
         // Always tappable now — mic, send, and stop are each a real action;
         // there's no more "nothing to do" state to disable.
         .animation(AppAnimation.resolve(AppAnimation.fast, reduceMotion: reduceMotion), value: isGenerating)
+        // `showsSend` (canSend/isFieldFocused) needs the same explicit
+        // protection `isGenerating` already has above (per Dan 2026-07-22) —
+        // without it, this icon swap has no animation of its own and just
+        // inherits whatever ambient `withAnimation` duration the caller
+        // happens to be using at the send/dismiss moment (`ConversationView
+        // .handleSend`'s keyboard-matching duration), which is what actually
+        // made this button look like it was "dropping slowly" through every
+        // round of retuning that duration — the button's own icon morph was
+        // riding along with it the whole time, unrelated to the scroll list
+        // or the composer's (native, already-instant) position.
+        .animation(AppAnimation.resolve(AppAnimation.fast, reduceMotion: reduceMotion), value: showsSend)
         // Light impact confirms the send tap (spec §6.10/§18.15).
         .sensoryFeedback(.impact(weight: .light), trigger: sendTapped)
         .accessibilityLabel(isGenerating ? "Stop generating" : (showsSend ? "Send message" : "Start voice conversation"))

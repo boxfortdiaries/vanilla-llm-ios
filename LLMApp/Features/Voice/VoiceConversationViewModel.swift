@@ -59,8 +59,16 @@ final class VoiceConversationViewModel {
     private var synthesisFinished = false
     private var shouldResumeListeningAfterSpeaking = true
 
-    init(levelCount: Int = 9) {
+    /// `micGain` defaults to the live-voice-screen tuning (phone at a
+    /// distance). The composer's inline dictation field passes its own lower
+    /// value — held close to the mouth, the same gain clipped to 1.0 within
+    /// about a second and stayed there (confirmed via on-device logging, per
+    /// Dan 2026-07-22) rather than tracking speech.
+    private nonisolated let micGain: Double
+
+    init(levelCount: Int = 9, micGain: Double = 18.0) {
         levels = Array(repeating: 0.1, count: levelCount)
+        self.micGain = micGain
         playbackEngine.attach(playerNode)
     }
 
@@ -152,9 +160,13 @@ final class VoiceConversationViewModel {
     /// a closure written inside a @MainActor method gets @MainActor baked
     /// into it regardless of what's in its body.
     private nonisolated func attachTap(to inputNode: AVAudioInputNode, format: AVAudioFormat, request: SFSpeechAudioBufferRecognitionRequest) {
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+        // 512, not 1024 (per Dan 2026-07-22) — halves the buffer's own
+        // latency (~11ms vs ~23ms at typical sample rates) before a new
+        // amplitude reading is even available to the composer's waveform,
+        // independent of the display-side timer/animation cadence.
+        inputNode.installTap(onBus: 0, bufferSize: 512, format: format) { [weak self] buffer, _ in
             request.append(buffer)
-            let amplitude = Self.amplitude(of: buffer, gain: Self.micGain)
+            let amplitude = Self.amplitude(of: buffer, gain: self?.micGain ?? 18.0)
             Task { @MainActor in self?.handleAmplitude(amplitude) }
         }
     }
@@ -227,14 +239,12 @@ final class VoiceConversationViewModel {
     }
 
     /// Mic input RMS, normalized to a rough 0...1 range for the waveform —
-    /// not calibrated dB, just "enough signal to look alive."
-    // ponytail: `gain` is a dial-by-ear constant — real mic sensitivity
-    // varies by device, and this environment can't produce/hear real voice
-    // input to tune it against. Adjust on a real device if bars read too
-    // flat (raise) or too pinned-at-max (lower).
-    private nonisolated static let micGain = 18.0
-    /// Same dial-by-ear situation as `micGain`, tuned separately — TTS
-    /// playback sits at a different signal level than distant mic pickup.
+    /// not calibrated dB, just "enough signal to look alive." `gain` is a
+    /// dial-by-ear constant (see each call site — `micGain` for live mic
+    /// input, `ttsGain` below for TTS playback) since real mic sensitivity
+    /// and pickup distance vary by use case.
+    /// Same dial-by-ear situation as `micGain` above, tuned separately — TTS
+    /// playback sits at a different signal level than mic pickup.
     private nonisolated static let ttsGain = 6.0
     private nonisolated static func amplitude(of buffer: AVAudioPCMBuffer, gain: Double) -> Double {
         guard let data = buffer.floatChannelData?[0] else { return 0 }

@@ -446,8 +446,17 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
             return
         }
         chaseAttempts = 0
-        // 0.35s (down from 0.55s — still too slow, per Dan 2026-07-17).
-        animateChase(to: target.y, duration: 0.35)
+        // Matches the real system keyboard duration + curve exactly (per Dan
+        // 2026-07-22) — confirmed via on-device logging in both chat and voice
+        // mode that this reports the identical duration/curve in each (0.383s,
+        // curve 7), so it's genuinely the one real keyboard, not an artifact of
+        // this scroll view's own `keyboardDismissMode = .interactive` (an
+        // earlier theory, disproven since voice mode doesn't have this scroll
+        // view at all and still reported the same number). This is UIKit code,
+        // so — unlike `ConversationView.handleSend`'s SwiftUI animation — it can
+        // reuse the real curve exactly, not just approximate its duration. See
+        // `handleSend`'s own doc comment for the full history.
+        animateChase(to: target.y, duration: KeyboardAnimationInfo.duration)
     }
 
     /// The "go to bottom" button's own scroll — always tapped on an
@@ -482,12 +491,13 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
     /// after" reasoning and the 2026-07-13/2026-07-16 history behind it.
     private let largeResidualThreshold: CGFloat = 300
     private let maxChaseAttempts = 6
-    // Scaled proportionally with the primary duration above (ratio
-    // preserved from 0.09/0.28) — this is how often the chase re-checks
-    // whether the target moved, relative to how long each eased segment
-    // takes; changing the primary duration alone without this would have
-    // it re-check much earlier into each (now longer) segment than tuned.
-    private let chaseCheckInterval: TimeInterval = 0.11
+    /// How often the chase re-checks whether the target moved, relative to
+    /// how long each eased segment takes — a third of `duration` (the same
+    /// ratio this was previously hand-tuned to, e.g. 0.05s against a 0.15s
+    /// duration), computed from the real keyboard duration now rather than a
+    /// fixed constant, since that duration itself is no longer a fixed
+    /// constant either.
+    private func chaseCheckInterval(for duration: TimeInterval) -> TimeInterval { duration / 3 }
     private var chaseAttempts = 0
 
     private func animateChase(to targetY: CGFloat, duration: TimeInterval) {
@@ -496,7 +506,7 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
         NSLog("[ScrollHost] chase step=%d target=%.2f current=%.2f", chaseAttempts, target.y, scrollView.contentOffset.y)
         UIView.animate(
             withDuration: duration, delay: 0,
-            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
+            options: [.beginFromCurrentState, .allowUserInteraction, KeyboardAnimationInfo.curveOptions],
             animations: { scrollView.contentOffset = target },
             completion: { [weak self] finished in
                 self?.logSettled(target: target, finished: finished)
@@ -504,7 +514,7 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
         )
         guard chaseAttempts < maxChaseAttempts else { return }
         chaseAttempts += 1
-        DispatchQueue.main.asyncAfter(deadline: .now() + chaseCheckInterval) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + chaseCheckInterval(for: duration)) { [weak self] in
             self?.recheckChaseTarget(previousTargetY: targetY)
         }
     }

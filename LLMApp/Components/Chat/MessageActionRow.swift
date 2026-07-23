@@ -89,6 +89,13 @@ struct MessageActionRow: View {
         Image(systemName: name)
             .font(.system(size: 15))
             .foregroundStyle(filled ? AppColor.Tint.cta : AppColor.Text.secondary)
+            // Snap, don't crossfade — `.contentTransition` below animates the
+            // glyph-shape morph (filled ↔ outline), and without this the
+            // color change rides along in the same animation, so mid-morph
+            // you'd see the old (tinted) and new (gray) glyph blended
+            // together, reading as a gray flash on deselect (per Dan
+            // 2026-07-22).
+            .animation(nil, value: filled)
             .frame(width: 24, height: 24)
             .contentTransition(.symbolEffect(.replace))
     }

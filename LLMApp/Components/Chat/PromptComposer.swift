@@ -48,6 +48,7 @@ struct PromptComposer: View {
 
     @FocusState private var isFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @Namespace private var glassNamespace
     /// True once the text wraps past one line — squares off the field.
     @State private var isMultiline = false
@@ -76,7 +77,12 @@ struct PromptComposer: View {
     // ever displays however many bars actually fit its measured width (see
     // its own comment), this just needs to be at least that many so the
     // widest realistic field never runs out of samples to show.
-    @State private var dictation = VoiceConversationViewModel(levelCount: 120)
+    // gain: 8.0 — lower than the live voice screen's default 18.0. Measured
+    // on-device (per Dan 2026-07-22): dictation holds the phone close to the
+    // mouth, so raw RMS peaked around 0.11 here vs. the distant pickup the
+    // default gain assumes; 18 clipped that to 1.0 and pinned there for
+    // whole seconds instead of tracking speech.
+    @State private var dictation = VoiceConversationViewModel(levelCount: 120, micGain: 8.0)
     @State private var isDictating = false
     /// Comfortably more than the widest realistic field can show at once —
     /// the rest just sit clipped off the leading edge until their turn to
@@ -103,6 +109,13 @@ struct PromptComposer: View {
     /// the strip moving continuously regardless of what's coming in, which is
     /// the actual "never ending" / "live" feel being asked for.
     @State private var dictationScrollTimer: Timer?
+    /// Attack-instant/decay-gradual envelope applied to the raw peak before
+    /// it becomes a bar — the raw peak window (see `dictationScrollTimer`'s
+    /// closure) is noisy on its own (consonants and the quiet gaps between
+    /// syllables swing it between near-floor and near-ceiling from one bar to
+    /// the next), which read as spikes poking through a flat baseline rather
+    /// than one continuous wave (per Dan 2026-07-22).
+    @State private var dictationEnvelope: Double = 0.1
     /// Debounces `dictationField`'s bar count against its own measured
     /// width — recomputing that count on every single geometry report during
     /// the mic↔stop liquid-glass morph (the field's width is mid-transition,
@@ -212,7 +225,26 @@ struct PromptComposer: View {
                         SendButton(
                             isGenerating: isGenerating, canSend: canSend,
                             isFieldFocused: isFocused,
-                            onSend: { isFocused = false; onSend() },
+                            // Plain, unanimated — same as `onMicTap` below and
+                            // as voice mode's own ghost field (per Dan
+                            // 2026-07-22: matching the real keyboard's own
+                            // curve turned out to mean *not* wrapping this in
+                            // any SwiftUI animation at all, letting the real
+                            // keyboard dismiss run unopposed, exactly like
+                            // voice mode already does — that's what made
+                            // voice mode's dismiss feel flawless in the first
+                            // place. An earlier attempt wrapped this in
+                            // `withAnimation` to fix a lag that turned out to
+                            // be caused elsewhere (`ConversationView
+                            // .handleSend`'s own `withAnimation` around
+                            // `viewModel.send()` — see its doc comment); once
+                            // that root cause was fixed, this wrapper was
+                            // just an unnecessary curve mismatch against the
+                            // real keyboard.
+                            onSend: {
+                                isFocused = false
+                                onSend()
+                            },
                             onStop: onStop,
                             onMicTap: { isFocused = false; onMicTap() }
                         )
@@ -267,6 +299,18 @@ struct PromptComposer: View {
         .onDisappear {
             dictationScrollTimer?.invalidate()
             dictation.stopListening()
+        }
+        // Swiping down for Control Center (or opening the App Switcher) makes
+        // the scene `.inactive` without touching focus — `isFocused` is still
+        // true the whole time, so the instant the scene goes back `.active`
+        // UIKit restores the keyboard on its own. Visually that's the
+        // keyboard hiding then popping back in a beat later, with the
+        // composer dropping and re-rising with it (per Dan 2026-07-22 — seen
+        // frame-by-frame swiping open Control Center over a focused field).
+        // Resigning focus here means the keyboard just stays down instead —
+        // deliberate trade-off Dan chose over keeping the auto-restore.
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { isFocused = false }
         }
     }
 
@@ -381,8 +425,12 @@ struct PromptComposer: View {
             // Same token the starter suggestions use for their own fade
             // (`ConversationView.emptyConversation`), keyed to the same
             // `text.isEmpty` condition, so the mic and the suggestions ease
-            // out together (per Dan 2026-07-16).
-            .animation(AppAnimation.resolve(AppAnimation.slow, reduceMotion: reduceMotion), value: text.isEmpty)
+            // out together (per Dan 2026-07-16). `.standard`, not `.slow`
+            // (per Dan 2026-07-22) — sending a message clears `text` at the
+            // same instant the keyboard dismisses, and `.slow`'s 0.35s spring
+            // visibly outlasted the keyboard's own ~0.25s hide animation,
+            // reading as the input UI lagging behind it.
+            .animation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion), value: text.isEmpty)
         }
         .glassEffect(.regular, in: .rect(cornerRadius: corner))
         .glassEffectID("messageField", in: glassNamespace)
@@ -392,9 +440,11 @@ struct PromptComposer: View {
     /// single-line field, showing a live, edge-to-edge scrolling waveform
     /// instead of text (per Dan 2026-07-16), like a recording scrubber, all
     /// one consistent color matching the starter-suggestion rows' icons/text
-    /// (per Dan 2026-07-16 — dropped the amplitude-driven black highlight),
-    /// uniform bar height (no amplitude-driven height either, that's
-    /// `WaveformView`'s job on the voice-conversation screen, not this one).
+    /// (per Dan 2026-07-16 — dropped the amplitude-driven black highlight).
+    /// Bar *height* is back to tracking real mic amplitude (per Dan
+    /// 2026-07-22) — each bar renders `sample.level` (already captured, just
+    /// unused until now) instead of a flat 6pt, so the strip reads as an
+    /// actual voice waveform as it scrolls by, not a marching-ants pattern.
     /// A fixed `height: 44` (not `minHeight`, unlike `messageField`) — this
     /// never needs to grow, and forcing it exactly keeps it pixel-matched to
     /// the single-line field's height.
@@ -429,13 +479,16 @@ struct PromptComposer: View {
             // the exact size is spec'd directly.
             let barWidth: CGFloat = 2
             let spacing: CGFloat = 2
+            // Floors at `barWidth` (a circle) so a silent bar still reads as
+            // a dot rather than vanishing, same convention as `WaveformView`.
+            let maxBarHeight: CGFloat = 28
             let renderCount = dictationVisibleCount + dictationEdgeBuffer * 2
             let rendered = dictationSamples.suffix(renderCount)
             HStack(spacing: spacing) {
                 ForEach(Array(rendered)) { sample in
                     Capsule()
                         .fill(AppColor.Text.secondary)
-                        .frame(width: barWidth, height: 6)
+                        .frame(width: barWidth, height: max(barWidth, maxBarHeight * CGFloat(sample.level)))
                 }
             }
             // Default (center) alignment, not `.trailing` — rendering more
@@ -444,15 +497,24 @@ struct PromptComposer: View {
             // off-screen "runway" it needs.
             .frame(width: proxy.size.width, height: proxy.size.height)
             .clipped()
-            // `.linear`, not `.easeInOut` — matches `dictationScrollTimer`'s
-            // own interval so each step's animation finishes right as the
-            // next one starts, but critically at *constant* velocity: easing
-            // gives each discrete step its own accelerate-decelerate bump,
-            // which chained across many steps read as a rhythmic pulse
-            // ("dun dun dun") rather than one continuous glide (per Dan
-            // 2026-07-16). Slower still, too ("slow the waveform down even
-            // more").
-            .animation(.linear(duration: 0.5), value: dictationSamples.map(\.id))
+            // `.linear`, not `.easeInOut` — a constant-velocity glide rather
+            // than each discrete step having its own accelerate-decelerate
+            // bump, which chained across many steps reads as a rhythmic
+            // pulse ("dun dun dun") rather than one continuous slide (per Dan
+            // 2026-07-16). Deliberately *shorter* than `dictationScrollTimer`'s
+            // 0.1s interval, not equal to it (per Dan 2026-07-22) — with zero
+            // slack, any frame that took just over 100ms (competing with
+            // speech-recognition callbacks and glass-effect morphing on the
+            // same main thread) left the previous shift still animating when
+            // the next one queued, forcing SwiftUI to retarget mid-flight;
+            // with 2pt-wide bars on a 4pt pitch, that position residual was a
+            // large fraction of a bar's own width and read as doubled bars.
+            // 0.05s specifically, confirmed on-device (per Dan 2026-07-22):
+            // 0.08s brought the doubling back, so the real safety margin is
+            // narrower than a comfortable guess — don't nudge this toward
+            // 0.1s without re-verifying on a real device, since somewhere
+            // between 0.05 and 0.08 is an edge we haven't actually located.
+            .animation(.linear(duration: 0.05), value: dictationSamples.map(\.id))
             // Fades the leading edge — bars now slide fully off-screen before
             // their identity is dropped (see `dictationEdgeBuffer`), but the
             // clip itself is still a hard rectangular cut, so a bar
@@ -573,6 +635,7 @@ struct PromptComposer: View {
         // 2026-07-16: "start on the right hand side" describes where *new*
         // samples enter, not an empty-to-full growth animation).
         dictationSamples = (0..<maxDictationSamples).map { _ in DictationSample(level: 0.1) }
+        dictationEnvelope = 0.1
         withAnimation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion)) {
             isDictating = true
         }
@@ -580,12 +643,18 @@ struct PromptComposer: View {
         // Fixed cadence, not tied to whether the mic amplitude itself
         // changed — see `dictationScrollTimer`'s own doc comment for why.
         dictationScrollTimer?.invalidate()
-        // Matches `dictationField`'s animation duration (per Dan 2026-07-16:
-        // "slow the waveform down even more").
-        dictationScrollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+        // Matches `dictationField`'s animation duration — 0.1s (per Dan
+        // 2026-07-22; was 0.5s).
+        dictationScrollTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
             Task { @MainActor in
-                let newest = dictation.levels.last ?? 0.1
-                dictationSamples.append(DictationSample(level: newest))
+                // Raw peak over the trailing ~46ms (4 samples at the tap's
+                // 512-buffer size, per Dan 2026-07-22), then smoothed through
+                // `dictationEnvelope` (see its own doc comment) rather than
+                // appended directly — the raw window alone is too noisy at
+                // this cadence.
+                let instantPeak = dictation.levels.suffix(4).max() ?? 0.1
+                dictationEnvelope = max(instantPeak, dictationEnvelope * 0.75)
+                dictationSamples.append(DictationSample(level: dictationEnvelope))
                 if dictationSamples.count > maxDictationSamples { dictationSamples.removeFirst() }
             }
         }

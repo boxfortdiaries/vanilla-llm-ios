@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Primary AI interaction surface — the core application experience (spec
 /// §8.3). Composer sits in `.safeAreaInset(edge: .bottom)` so keyboard
@@ -119,6 +120,15 @@ struct ConversationView: View {
                     .transition(.opacity)
             }
         }
+        // Registered here (not lazily inside `handleSend`) so the real
+        // keyboard duration/curve is already captured well before the first
+        // send — the keyboard has to show at least once (the user typing)
+        // before it can be dismissed, and that show event is what populates
+        // `KeyboardAnimationInfo`. Confirmed via on-device logging (per Dan
+        // 2026-07-22) that chat and voice mode report the identical
+        // duration/curve — this genuinely is the one real keyboard, not two
+        // different ones to reconcile.
+        .onAppear { KeyboardAnimationInfo.observeIfNeeded() }
         // .slow (not .standard) — the chat/voice swap read as too abrupt at
         // the standard spring's speed; the extra bit of ease reads calmer for
         // a mode switch this size (per Dan 2026-07).
@@ -314,20 +324,40 @@ struct ConversationView: View {
         }
     }
 
-    /// Cohesive rise: the whole message — text and attachments as one unit —
-    /// animates into its pinned top spot (via the list's insertion transition),
-    /// then the reply starts streaming into the space below it.
+    /// `viewModel.send()` runs unanimated (per Dan 2026-07-22) — the "cohesive
+    /// rise" this used to have (the new message animating into its pinned top
+    /// spot via `withAnimation` around this call) is what was causing the
+    /// send-to-settle lag. `MessageScrollHost`'s `UIHostingController` uses
+    /// `sizingOptions = [.intrinsicContentSize]`, which smoothly *interpolates*
+    /// its own reported size for the full length of whatever animated
+    /// transaction its content changed under — confirmed via on-device
+    /// logging that `contentSize` kept reading a live, still-moving value for
+    /// ~250ms after send regardless of two independent things that were ruled
+    /// out first (forcing extra `layoutIfNeeded()` passes did nothing; and
+    /// stripping the newly-inserted row's own `.offset`/`.scale` transition
+    /// down to opacity-only did nothing either — same numbers to the decimal
+    /// both times). `MessageScrollHost`'s scroll-chase was built to track a
+    /// *real* moving target (a streaming reply's growing content) and was
+    /// reasonably treating this synthetic, animation-driven `contentSize`
+    /// wobble the same way, redirecting mid-flight and adding a second
+    /// UIKit animation leg on top of the first. Removing the withAnimation
+    /// here means `MessageScrollHost` reads the new message's true, final
+    /// `contentSize` on its very first pass — no redirect needed — confirmed
+    /// via one more on-device repro after this change: chase settles in one
+    /// pass instead of two. This does mean a fresh message currently just
+    /// pops into place rather than rising in — reintroducing that visual
+    /// would need to come from each row's own locally-scoped animation
+    /// instead of one covering this whole state mutation, so it can't feed
+    /// back into `MessageScrollHost`'s size reads the same way again.
     private func handleSend() {
-        // Hold the reply until the push-up scroll + rise have fully settled, so it
-        // can't start mid-scroll and jerk the message. A first message has no
-        // push-up, so it needs less. Scaled up proportionally with the spring's
-        // own response below (per Dan 2026-07-17: 0.55s still read as "pretty
-        // fast" — 0.72s is another 30% past that) — keeps the same settle-time
-        // buffer past the spring's own duration.
-        let settle: Duration = .milliseconds(viewModel.messages.isEmpty ? 585 : 1065)
-        withAnimation(AppAnimation.resolve(.spring(response: 0.72, dampingFraction: 0.97), reduceMotion: reduceMotion)) {
-            _ = viewModel.send()
-        }
+        let keyboardDuration = KeyboardAnimationInfo.duration
+        // Hold the reply until the push-up scroll has settled, so it can't
+        // start mid-scroll and jerk the message. A first message has no
+        // push-up, so it needs less — same ratios as the last hardcoded
+        // values (125ms/220ms against a 150ms response) preserved against the
+        // real keyboard duration.
+        let settle: Duration = .milliseconds(Int((viewModel.messages.isEmpty ? 0.833 : 1.467) * keyboardDuration * 1000))
+        _ = viewModel.send()
         Task { @MainActor in
             try? await Task.sleep(for: settle)
             viewModel.respond()
@@ -376,7 +406,9 @@ struct ConversationView: View {
                             // the fade eases over a different curve, and the two
                             // racing on different clocks is what read as the
                             // rows repositioning inconsistently (per Dan 2026-07).
-                            withAnimation(AppAnimation.resolve(AppAnimation.slow, reduceMotion: reduceMotion)) {
+                            // `.standard`, not `.slow` (per Dan 2026-07-22) —
+                            // see the fade's own `.animation` comment below.
+                            withAnimation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion)) {
                                 viewModel.composerText = suggestion.text
                             }
                         } label: {
@@ -402,16 +434,19 @@ struct ConversationView: View {
                 .padding(.horizontal, AppSpacing.xl)
                 .padding(.bottom, AppSpacing.xs)
                 .transition(.opacity)
-                // Same .slow token as the voice-mode swap, for one consistent
-                // motion language across every way these rows leave — tapping
-                // the field to type, opening the attachment tray, or entering
-                // voice mode. Scoped to just this row group, not the outer
+                // Scoped to just this row group, not the outer
                 // emptyConversation container — otherwise it also becomes the
                 // governing animation when the whole view exits for an
                 // unrelated reason (e.g. entering voice mode), making the rows
                 // fade out on their own clock instead of matching that
-                // transition's actual duration (per Dan 2026-07).
-                .animation(AppAnimation.resolve(AppAnimation.slow, reduceMotion: reduceMotion), value: showSuggestions)
+                // transition's actual duration (per Dan 2026-07). Shares
+                // `PromptComposer`'s mic-fade token (`.standard`, not `.slow`
+                // — per Dan 2026-07-22, changed from the voice-mode swap's
+                // token since `showSuggestions` reverts at the same instant
+                // the keyboard dismisses after sending, and `.slow`'s 0.35s
+                // spring visibly outlasted the keyboard's own ~0.25s hide
+                // animation) so the mic and these rows still ease together.
+                .animation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion), value: showSuggestions)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
