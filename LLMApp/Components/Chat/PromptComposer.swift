@@ -127,6 +127,13 @@ struct PromptComposer: View {
     private struct DictationSample: Identifiable {
         let id = UUID()
         var level: Double
+        /// False for the quiet pre-fill bars a fresh recording starts with,
+        /// true for a bar built from a real captured buffer — drives
+        /// `dictationField`'s black-vs-gray confirmation coloring (per Dan
+        /// 2026-07-22), not `level` itself, since a genuinely quiet moment
+        /// mid-recording should still read as "captured," not fall back to
+        /// looking like empty pre-fill.
+        var isCaptured: Bool = false
     }
 
     private var canSend: Bool {
@@ -486,8 +493,12 @@ struct PromptComposer: View {
             let rendered = dictationSamples.suffix(renderCount)
             HStack(spacing: spacing) {
                 ForEach(Array(rendered)) { sample in
+                    // Black once this bar came from a real captured buffer,
+                    // gray while it's still unfilled pre-fill — reads as a
+                    // confirmation that the mic is actually hearing the user
+                    // (per Dan 2026-07-22).
                     Capsule()
-                        .fill(AppColor.Text.secondary)
+                        .fill(sample.isCaptured ? AppColor.Text.primary : AppColor.Text.secondary)
                         .frame(width: barWidth, height: max(barWidth, maxBarHeight * CGFloat(sample.level)))
                 }
             }
@@ -654,7 +665,7 @@ struct PromptComposer: View {
                 // this cadence.
                 let instantPeak = dictation.levels.suffix(4).max() ?? 0.1
                 dictationEnvelope = max(instantPeak, dictationEnvelope * 0.75)
-                dictationSamples.append(DictationSample(level: dictationEnvelope))
+                dictationSamples.append(DictationSample(level: dictationEnvelope, isCaptured: true))
                 if dictationSamples.count > maxDictationSamples { dictationSamples.removeFirst() }
             }
         }
