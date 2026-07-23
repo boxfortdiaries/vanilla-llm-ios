@@ -8,17 +8,29 @@ import UIKit
 /// image-editing backend, so this is still "UI first" in that sense, but a
 /// message/attachment typed here really does reach the conversation.
 ///
-/// Presented via `.sheet`, forced to dark mode (per Dan 2026-07-19) — a plain
-/// native sheet, not a hand-rolled hero-zoom-from-thumbnail transition. An
-/// earlier version grew the image out of the tapped tile's exact frame using
-/// `.fullScreenCover` and a hand-rolled drag gesture; that was replaced
-/// because `.sheet`'s own rounded-corner/dimmed-backdrop presentation and
-/// native swipe-to-dismiss were worth more than the zoom effect. (The
-/// zoom-from-thumbnail approach itself existed because Apple's own
-/// `.navigationTransition(.zoom)` read the tapped tile's position wrong —
-/// those tiles live inside `MessageScrollHost`'s raw `UIScrollView`, which
-/// breaks SwiftUI's geometry APIs; see `AttachmentTray.availableWidth`'s doc
-/// comment.)
+/// Presented via `.fullScreenCover`, forced to dark mode (per Dan
+/// 2026-07-19). Was briefly a plain `.sheet` instead, for its free
+/// dimmed-backdrop reveal and native swipe-to-dismiss — reverted back to
+/// `.fullScreenCover` (per Dan 2026-07-23) because iOS 26's Liquid Glass
+/// sheet chrome bakes a rounded-corner mask into the sheet's own frame that
+/// nests into the display's true hardware corner curve at the bottom two
+/// corners. On iPhone Pro models (a tighter corner radius than non-Pro,
+/// which is why this was invisible on an iPhone 17 simulator) that mask
+/// reveals a sliver of the window's own background against this screen's
+/// solid black content — confirmed pixel-for-pixel via a raw on-device
+/// screenshot, not a camera artifact, and immune to every sheet-level
+/// modifier (`presentationCornerRadius`, `presentationDetents(.large)`,
+/// `presentationBackground`) since it's the system's own card chrome, not
+/// anything in this view. `.fullScreenCover` has no card chrome to nest a
+/// mask into — it simply is the screen. The drag-to-dismiss below is a
+/// simple translate+fade, not the elaborate grow-from-thumbnail transform an
+/// earlier `.fullScreenCover` version used — that was removed separately for
+/// an unrelated reason (Apple's own `.navigationTransition(.zoom)`, and the
+/// hand-rolled version that replaced it, both read the tapped tile's
+/// position wrong, since those tiles live inside `MessageScrollHost`'s raw
+/// `UIScrollView`, which breaks SwiftUI's geometry APIs; see
+/// `AttachmentTray.availableWidth`'s doc comment) and isn't worth reviving
+/// just to get `.fullScreenCover` back.
 struct EditImagePreviewView: View {
     /// Every image attachment from the same message's own h-scroll row (per
     /// Dan 2026-07-19) — swiping here pages through the same set, not just
@@ -31,6 +43,7 @@ struct EditImagePreviewView: View {
     var actions: MessageActions
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var editText = ""
     @State private var editAttachments: [Attachment] = []
     /// Which page `TabView` is showing — starts on whichever tile was
@@ -39,6 +52,16 @@ struct EditImagePreviewView: View {
     /// Drives `ActivityView` below instead of a `ShareLink` — see the Share
     /// action's own comment for why (per Dan 2026-07-19).
     @State private var isShareSheetPresented = false
+    /// Live vertical drag-to-dismiss offset — `.fullScreenCover` has no
+    /// native swipe-to-dismiss the way `.sheet` does, so this hand-rolls the
+    /// same gesture `.sheet` gave up (per Dan 2026-07-23): translate + fade
+    /// with the drag, dismiss past a distance/velocity threshold, else
+    /// spring back to zero.
+    @State private var dragOffset: CGFloat = 0
+
+    /// How far a downward drag has to travel before it counts as "mostly
+    /// dismissed" for the fade — a tuned distance, not a physical unit.
+    private let dragDismissDistance: CGFloat = 320
 
     init(attachments: [Attachment], selected: Attachment, actions: MessageActions) {
         self.attachments = attachments
@@ -57,9 +80,24 @@ struct EditImagePreviewView: View {
         return UIImage(contentsOfFile: url.path)
     }
 
+    /// 1 at rest, fading to 0 as a drag approaches `dragDismissDistance`.
+    private var dragProgress: CGFloat {
+        max(0, 1 - dragOffset / dragDismissDistance)
+    }
+
+    private func closeAnimated() {
+        withAnimation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion)) {
+            dragOffset = dragDismissDistance
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + AppAnimation.standardDuration) {
+            dismiss()
+        }
+    }
+
     var body: some View {
         ZStack {
             AppColor.Background.primary.ignoresSafeArea()
+                .opacity(dragProgress)
             TabView(selection: $selectedID) {
                 ForEach(attachments) { attachment in
                     VStack(spacing: 0) {
@@ -87,6 +125,33 @@ struct EditImagePreviewView: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
+            .offset(y: dragOffset)
+            // Downward, vertical-dominant drags only, so a horizontal swipe
+            // between pages doesn't fight with dismissal.
+            .gesture(
+                DragGesture(minimumDistance: 10, coordinateSpace: .global)
+                    .onChanged { value in
+                        guard value.translation.height > 0,
+                              value.translation.height > abs(value.translation.width)
+                        else { return }
+                        dragOffset = value.translation.height
+                    }
+                    .onEnded { value in
+                        if dragOffset > dragDismissDistance * 0.6 || value.velocity.height > 800 {
+                            closeAnimated()
+                        } else {
+                            withAnimation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion)) {
+                                dragOffset = 0
+                            }
+                        }
+                    }
+            )
+            // Tapping the image or the empty background (not a `Button`)
+            // while the composer's text field is focused should dismiss the
+            // keyboard, same as tapping empty space in the conversation
+            // behind it — `.simultaneousGesture` so this doesn't steal the
+            // drag-to-dismiss gesture above.
+            .simultaneousGesture(TapGesture().onEnded { UIApplication.shared.dismissKeyboard() })
         }
         .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -177,7 +242,6 @@ struct EditImagePreviewView: View {
                 ActivityView(activityItems: [url])
             }
         }
-        .presentationDragIndicator(.hidden)
         // `.colorScheme` (not `.preferredColorScheme`) for the content
         // itself — the latter overrides UIKit's interface style on the
         // hosting controller, which conflicts with the (non-dark-forced)

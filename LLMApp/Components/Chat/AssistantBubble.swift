@@ -131,7 +131,7 @@ struct AssistantBubble: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .sheet(item: $previewTarget) { attachment in
+        .fullScreenCover(item: $previewTarget) { attachment in
             EditImagePreviewView(attachments: imageAttachments, selected: attachment, actions: actions)
         }
     }
