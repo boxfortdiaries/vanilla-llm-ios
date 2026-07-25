@@ -32,11 +32,6 @@ final class MessageScrollController {
     func scrollToLive(animated: Bool) {
         viewController?.scrollToLive(animated: animated)
     }
-
-    /// See `MessageScrollViewController.settlePinnedRow`'s doc comment.
-    func settlePinnedRow(animated: Bool) {
-        viewController?.settlePinnedRow(animated: animated)
-    }
 }
 
 /// Hosts `MessageListContent` inside a real `UIScrollView` — see
@@ -434,11 +429,28 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
     func scrollToCanonical(animated: Bool) {
         guard hasLastUserMessage else { return }
         // Force any pending Auto Layout work to resolve synchronously before
-        // trusting `contentSize` — the message that was just sent needs its
-        // row's intrinsic size reflected here immediately, not on the next
-        // run-loop tick.
+        // trusting `pinnedMessageMinY` — the message that was just sent needs
+        // its row's intrinsic size/position reflected here immediately, not
+        // on the next run-loop tick.
         view.layoutIfNeeded()
-        let target = CGPoint(x: scrollView.contentOffset.x, y: canonicalTargetY)
+        // `pinnedMessageMinY - topInset`, not `canonicalTargetY` — 2026-07-25,
+        // per Dan: even with `recheckChaseTarget` fixed to converge on the
+        // right value quickly, starting from `canonicalTargetY` for this
+        // *first* leg can still point in the opposite direction from the
+        // real target (confirmed: for a reply with real content below the
+        // pinned row, canonicalTargetY and pinnedMessageMinY-based targets
+        // can have opposite sign relative to the current offset) — even one
+        // `.beginFromCurrentState` redirect immediately after is still a
+        // visible direction-reversal, not just a magnitude correction, so it
+        // still reads as a hitch. `pinLatestTurn` already defers this whole
+        // call by 50ms specifically so layout has settled first (see its own
+        // doc comment) — by the time this runs, `pinnedMessageMinY` is not
+        // the "freshly inserted, can't trust it yet" reading `canonicalTargetY`'s
+        // doc comment and the 2026-07-13 note warn about; that hazard is
+        // about reading it synchronously at zero delay, not after this
+        // deferral. Confirmed via NSLog: `onPinnedMinYChange` had already
+        // fired with the new, stable value *before* this method even runs.
+        let target = CGPoint(x: scrollView.contentOffset.x, y: pinnedMessageMinY - topInset)
         NSLog(
             "[ScrollHost] request target=%.2f current=%.2f contentSize=%.2f topInset=%.2f animated=%d",
             target.y, scrollView.contentOffset.y, scrollView.contentSize.height, topInset, animated ? 1 : 0
@@ -492,53 +504,6 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
         )
     }
 
-    /// Final correction once the trailing reply is known to be fully settled
-    /// (`ConversationList`'s `.onChange(of: messages.last?.status)`, when it
-    /// flips to `.complete`) — deliberately targets `pinnedMessageMinY`
-    /// directly instead of calling `scrollToCanonical` again. Root-caused via
-    /// NSLog + hand-checked algebra (2026-07-24, prompted by a Simulator-only
-    /// "image reply lands overshot" report): `canonicalTargetY`'s
-    /// contentSize-based formula overshoots by roughly the reply content's
-    /// own height below the pinned row — the exact same double-counting bug
-    /// `reassertPinAfterLayoutChange`'s RESOLVED note already describes for
-    /// the rotation path, just never fixed for this one. A reply with a tall
-    /// image row makes that overshoot large enough to visibly cut the pinned
-    /// row off-screen; confirmed via `LLMDebugUITests.testImageReplyLanding`
-    /// that repeatedly re-chasing `scrollToCanonical` just converges *more
-    /// reliably* on that same wrong value, not a correct one — platform
-    /// timing (Simulator vs. device) only ever changed whether the chase
-    /// converged at all, never what it converged to.
-    ///
-    /// Safe to use `pinnedMessageMinY` here specifically because, unlike the
-    /// initial send-path chase, this fires well after the row was inserted —
-    /// nothing "freshly inserted" about it by the time a reply has finished
-    /// streaming, so the row-insertion-perturbation hazard `canonicalTargetY`'s
-    /// own doc comment warns about doesn't apply (identical reasoning to why
-    /// the rotation path already trusts this same measurement).
-    func settlePinnedRow(animated: Bool) {
-        guard hasLastUserMessage else { return }
-        view.layoutIfNeeded()
-        let target = CGPoint(x: scrollView.contentOffset.x, y: pinnedMessageMinY - topInset)
-        NSLog(
-            "[ScrollHost] final-settle target=%.2f current=%.2f pinnedMessageMinY=%.2f topInset=%.2f",
-            target.y, scrollView.contentOffset.y, pinnedMessageMinY, topInset
-        )
-        guard animated else {
-            scrollView.contentOffset = target
-            logSettled(target: target, finished: true)
-            return
-        }
-        let scrollView = scrollView
-        UIView.animate(
-            withDuration: 0.35, delay: 0,
-            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
-            animations: { scrollView.contentOffset = target },
-            completion: { [weak self] finished in
-                self?.logSettled(target: target, finished: finished)
-            }
-        )
-    }
-
     /// See `scrollToCanonical`'s doc comment for the "chase, don't correct
     /// after" reasoning and the 2026-07-13/2026-07-16 history behind it.
     private let largeResidualThreshold: CGFloat = 300
@@ -571,9 +536,55 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
         }
     }
 
+    /// Root-caused 2026-07-24/25 (NSLog + hand-checked algebra, see
+    /// `canonicalTargetY`'s own doc comment for the derivation):
+    /// `canonicalTargetY`'s contentSize-based formula overshoots by roughly
+    /// the reply content's own height below the pinned row, so re-chasing it
+    /// just converges *more precisely* on a wrong value, never a correct
+    /// one. First attempted fix bolted a *second* animation onto message
+    /// completion (`settlePinnedRow`, now removed) — technically landed on
+    /// the right value, but as a distinct motion *after* the chase had
+    /// already visibly settled on the wrong one, reproducing the exact
+    /// "settle, then correct" jitter Dan explicitly rejected on 2026-07-16
+    /// (see `scrollToCanonical`'s doc comment) in favor of this chase
+    /// existing at all — a hitch, just relocated to a different trigger.
+    ///
+    /// Actual fix: every recheck past the first uses `pinnedMessageMinY`
+    /// directly instead — it depends only on content *above* the pinned
+    /// row, never on the still-growing reply below, so once true it stays
+    /// true regardless of how much taller the reply gets. `canonicalTargetY`
+    /// stays the *first* target (`scrollToCanonical`'s own initial
+    /// `animateChase` call, below) — that one fires at essentially zero
+    /// delay after insertion, still inside the row-insertion-perturbation
+    /// window `canonicalTargetY`'s doc comment and the 2026-07-13 note above
+    /// warn about; by the time this recheck runs (`chaseCheckInterval`
+    /// later), that window has passed. Confirmed via
+    /// `LLMDebugUITests.testImageReplyLanding` (message 1) that this
+    /// converges correctly, in one continuous chase, no second pass — the
+    /// motion itself is fixed either way.
+    ///
+    /// **Known Simulator-only limitation (2026-07-25, unresolved):** message
+    /// 1 in a fresh conversation lands exactly on target; message 2+ in the
+    /// same thread lands ~62pt low on the Simulator specifically — confirmed
+    /// clean on real hardware twice (device build, and Xcode's own Run).
+    /// NSLog traces on both `pinnedMessageMinY` (via `onPinnedMinYChange`)
+    /// and `scrollView.contentOffset` (via `scrollViewDidScroll`) showed
+    /// both values as stable and *arithmetically correct* — `pinnedMessageMinY
+    /// - contentOffset` computed exactly `topInset` — yet the on-screen
+    /// position, checked against the same values via the accessibility tree,
+    /// didn't match. Neither value changed through any traced code path
+    /// (both are only ever written from the one place each already documents),
+    /// so something is moving the rendered row independent of both the
+    /// `UIScrollView`'s own offset and the measured content geometry — not
+    /// yet root-caused. This is the same general class of Simulator-vs-device
+    /// render-pipeline timing gap as the "image reply lands overshot" bug
+    /// this file already documents (§ above), just not the same mechanism —
+    /// don't retry the "extend the chase's window/attempts" fix without new
+    /// evidence, since the logged values already show the *chase itself* is
+    /// not what's stale here.
     private func recheckChaseTarget(previousTargetY: CGFloat) {
         view.layoutIfNeeded()
-        let freshY = canonicalTargetY
+        let freshY = pinnedMessageMinY - topInset
         guard abs(freshY - previousTargetY) > 1 else {
             chaseAttempts = 0
             return

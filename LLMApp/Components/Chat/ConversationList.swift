@@ -166,26 +166,6 @@ struct ConversationList: View {
             // own settled-safe target instead of the fresh-send-only one.
             scrollController.scrollToLive(animated: true)
         }
-        // `scrollToCanonical`'s chase (`MessageScrollViewController
-        // .animateChase`) only re-checks the target for a fixed ~764ms real
-        // time budget, on the assumption the reply finishes growing well
-        // within it — and even fully converged, its `canonicalTargetY`
-        // formula still overshoots by roughly the reply's own content height
-        // below the pinned row (see `MessageScrollViewController
-        // .settlePinnedRow`'s doc comment for the root cause and how it was
-        // confirmed). Once the trailing message finishes streaming, content
-        // is genuinely final, so this fires one direct, trustworthy
-        // correction via `settlePinnedRow` rather than re-running the
-        // contentSize-based chase again. Gated on `ownership == .system` —
-        // never pull the viewport out from under a user who's browsing
-        // history (architecture §4.12).
-        .onChange(of: messages.last?.status) {
-            guard ownership == .system,
-                  messages.last?.role == .assistant,
-                  messages.last?.status == .complete
-            else { return }
-            scrollController.settlePinnedRow(animated: true)
-        }
     }
 
     /// Pin the latest user message to the top. Deferred one hop so the

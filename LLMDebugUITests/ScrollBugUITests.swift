@@ -113,6 +113,38 @@ final class ScrollBugUITests: XCTestCase {
         logPinnedFrame(app: app, content: "generate some images of a garden", label: "imageReply")
     }
 
+    /// Manual visual check for the dislike-feedback sheet header layout
+    /// (per Dan 2026-07-24: close moved to leading, Submit moved into the
+    /// trailing header slot). No assertions — screenshot only.
+    func testDislikeSheetHeaderLayout() {
+        let app = XCUIApplication()
+        app.launch()
+
+        let field = app.textFields["Message"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("Tell me a short fact")
+        app.buttons["Send message"].tap()
+
+        let deadline = Date().addingTimeInterval(15)
+        while !field.isEnabled, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+
+        // Coordinate-based tap, not `.tap()` directly — matches
+        // `testKeyboardDismissAndContextMenu`'s own workaround for the same
+        // class of flakiness (a plain `.tap()` on a small icon through this
+        // view hierarchy doesn't reliably land). No hard assertion on the
+        // sheet appearing — this test is a visual check, not a regression
+        // gate (same convention as this file's other screenshot-only tests).
+        let dislikeButton = app.buttons["messageActionDislike"]
+        XCTAssertTrue(dislikeButton.waitForExistence(timeout: 5))
+        dislikeButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let sheetVisible = app.staticTexts["Feedback"].waitForExistence(timeout: 5)
+        NSLog("[DislikeSheetCheck] sheet visible: %d", sheetVisible ? 1 : 0)
+        save("shot_dislike_sheet_header")
+    }
+
     /// Milestone 5 spot-check: does touch actually reach through the
     /// UIKit-owned scroll view to (a) SwiftUI's own tap-to-dismiss-keyboard
     /// gesture on empty space, and (b) a message bubble's `.contextMenu`
