@@ -43,6 +43,13 @@ final class MessageScrollController {
 struct MessageScrollHost: UIViewControllerRepresentable {
     var messages: [Message]
     var actions: MessageActions = MessageActions()
+    /// Handed to the hosted content once. Deliberately an object, not the
+    /// hidden-tile `UUID?` it used to be: that value changed while
+    /// `messages` hadn't, so it needed its own `refreshContent()`, and
+    /// reassigning `rootView` to hide one tile rebuilt and re-measured the
+    /// entire list mid-flight. `AttachmentTray` observes the object
+    /// directly instead — see its `previewState` doc comment.
+    var previewState: ImagePreviewState? = nil
     var topInset: CGFloat
     var bottomInset: CGFloat
     var controller: MessageScrollController
@@ -64,6 +71,7 @@ struct MessageScrollHost: UIViewControllerRepresentable {
         // latest value here since `currentContent` reads `self.actions` at
         // construction time.
         vc.actions = actions
+        vc.previewState = previewState
         // ponytail: contentInset changes (topInset/bottomInset — e.g.
         // composer height changing when the attachment tray opens) apply
         // instantly, not animated: `withAnimation` doesn't reach into a raw
@@ -112,6 +120,15 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
         didSet {
             guard bottomInset != oldValue else { return }
             scrollView.contentInset.bottom = bottomInset
+            refreshContent()
+        }
+    }
+    /// Refreshes on *identity* only — which happens once, at setup. The
+    /// tile hide/unhide inside it must NOT come through here; see the
+    /// representable's own `previewState` doc comment for what that cost.
+    var previewState: ImagePreviewState? = nil {
+        didSet {
+            guard previewState !== oldValue else { return }
             refreshContent()
         }
     }
@@ -164,6 +181,7 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
         MessageListContent(
             messages: messages,
             actions: actions,
+            previewState: previewState,
             reserveHeight: reserveHeight,
             onPinnedHeightChange: { [weak self] h in
                 // 2026-07-13: an *exact* equality guard here caused a real

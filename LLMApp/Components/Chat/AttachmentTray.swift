@@ -7,6 +7,17 @@ import SwiftUI
 struct AttachmentTray: View {
     var attachments: [Attachment]
     var tileSize: CGFloat = 56
+    /// Hero preview state, read HERE rather than received as a plain
+    /// `UUID?` from above. That plumbing ran through `MessageScrollHost`,
+    /// whose setter reassigned the hosting controller's `rootView` — so
+    /// hiding a single tile rebuilt and re-measured the whole message list,
+    /// mid-flight, while a spring was running. Since that host sizes on
+    /// `.intrinsicContentSize` (which interpolates across any active
+    /// animation), the re-measure could nudge content behind the chat's
+    /// glass and make it resample. Reading the observable here re-renders
+    /// just this tray. nil for the composer's own tray, which has no
+    /// preview. See `ImagePreviewState`.
+    var previewState: ImagePreviewState? = nil
     /// Overrides each image tile's width, keeping `tileSize` as its height —
     /// see `AttachmentTileView.tileWidth`. nil (default) keeps square tiles.
     /// Ignored per-tile when `naturalAspect` is true.
@@ -54,7 +65,7 @@ struct AttachmentTray: View {
     /// it's the screen width minus fixed content margins, known up front.
     var availableWidth: CGFloat? = nil
     /// Forwarded to each `AttachmentTileView` — see its own doc comment.
-    var onTapImage: ((Attachment) -> Void)? = nil
+    var onTapImage: ((Attachment, CGRect?) -> Void)? = nil
     /// Forwarded to each `AttachmentTileView` — see its own doc comment.
     var simulateGenerating: Bool = false
 
@@ -163,6 +174,7 @@ struct AttachmentTray: View {
         HStack(spacing: tileSpacing) {
             ForEach(Array(attachments.enumerated()), id: \.element.id) { index, attachment in
                 let shown = !staggers || appeared
+                let heroHidden = previewState?.hiddenTileID == attachment.id
                 AttachmentTileView(
                     attachment: attachment, tileSize: tileSize, tileWidth: tileWidth, corner: corner,
                     naturalAspect: naturalAspect,
@@ -170,7 +182,12 @@ struct AttachmentTray: View {
                     simulateGenerating: simulateGenerating
                 )
                     .overlay(alignment: .topTrailing) { removeButton(attachment) }
-                    .opacity(shown ? 1 : 0)
+                    // Hero stand-in: invisible but still laid out, so the
+                    // row doesn't reflow and the flight has a stable frame
+                    // to come home to. `shown` (the stagger entrance) and
+                    // this multiply rather than fight.
+                    .opacity(heroHidden ? 0 : (shown ? 1 : 0))
+                    .allowsHitTesting(!heroHidden)
                     .scaleEffect(shown ? 1 : 0.97, anchor: .bottom)
                     .offset(y: shown ? 0 : 8)
                     // Each tile trails the last by a beat — quick, gentle spring

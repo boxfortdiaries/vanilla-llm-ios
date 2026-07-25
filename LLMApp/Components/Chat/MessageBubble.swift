@@ -13,6 +13,9 @@ import SwiftUI
 struct MessageBubble: View {
     var message: Message
     var actions: MessageActions = MessageActions()
+    /// Hero preview state, passed straight through — only `AttachmentTray`
+    /// reads it. See `ImagePreviewState`.
+    var previewState: ImagePreviewState? = nil
 
     var body: some View {
         content
@@ -24,9 +27,9 @@ struct MessageBubble: View {
     private var content: some View {
         switch message.role {
         case .user:
-            UserBubble(message: message, actions: actions)
+            UserBubble(message: message, actions: actions, previewState: previewState)
         case .assistant:
-            AssistantBubble(message: message, actions: actions)
+            AssistantBubble(message: message, actions: actions, previewState: previewState)
         case .system:
             Text(message.content)
                 .font(AppFont.footnote)

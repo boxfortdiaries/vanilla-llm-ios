@@ -38,6 +38,14 @@ struct MessageActions {
     /// having silently sent an image and generated a reply nobody asked for
     /// (per Dan 2026-07-19).
     var onStartVoice: (Attachment?) -> Void = { _ in }
+    /// Routes a tapped image tile up to `ChatCard`, which owns the hero
+    /// preview overlay (see `HeroImagePreview`) — a closure crossing the
+    /// `MessageScrollHost` hosting boundary, same as every other action
+    /// here, because SwiftUI preferences can't cross it. The request
+    /// carries its own `MessageActions` copy so the preview's composer
+    /// keeps working without `ChatCard` needing `ConversationView`'s
+    /// fully-built actions.
+    var onPreviewImage: (ImagePreviewRequest) -> Void = { _ in }
 
     static func standard(viewModel: ConversationViewModel) -> MessageActions {
         MessageActions(

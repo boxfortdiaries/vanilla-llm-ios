@@ -29,6 +29,15 @@ struct ConversationView: View {
     /// already support being reused across multiple voice sessions within
     /// one conversation.
     @State private var voice = VoiceConversationViewModel()
+    /// Hero preview state, owned by `ChatCard` (like `voiceRoute`) because
+    /// the overlay must mount *above* the nav bar that `ChatCard` adds via
+    /// `.safeAreaInset` — an overlay inside this view would leave the bar's
+    /// glass buttons floating over (and tappable through) the preview.
+    ///
+    /// Written here by `actions.onPreviewImage` and passed down to
+    /// `ConversationList`, but never *read* in this body: this view rebuilds
+    /// the composer (glass) every time it runs. See `ImagePreviewState`.
+    let previewState: ImagePreviewState
     /// Bottom edge of the floating header (from ChatCard), so the list rests its
     /// content below it and the top fade lines up with it.
     var headerHeight: CGFloat = 0
@@ -87,16 +96,20 @@ struct ConversationView: View {
             viewModel.pendingVoiceAttachment = attachment
             handleMicTap()
         }
+        actions.onPreviewImage = { request in
+            previewState.request = request
+        }
         return actions
     }
 
     init(
         conversationID: UUID, store: ConversationStore, aiService: AIService, headerHeight: CGFloat = 0,
-        voiceRoute: Binding<VoiceOption?>
+        voiceRoute: Binding<VoiceOption?>, previewState: ImagePreviewState = ImagePreviewState()
     ) {
         _viewModel = State(initialValue: ConversationViewModel(conversationID: conversationID, store: store, aiService: aiService))
         self.headerHeight = headerHeight
         _voiceRoute = voiceRoute
+        self.previewState = previewState
     }
 
     // The nav bar, background, and rename flow live in `ChatCard` (above the
@@ -155,6 +168,7 @@ struct ConversationView: View {
                 ConversationList(
                     messages: viewModel.messages,
                     actions: actions,
+                    previewState: previewState,
                     isAtBottom: $isAtBottom,
                     scrollToBottomTrigger: scrollToBottomTrigger,
                     // headerHeight plus md: per Dan 2026-07-12, the

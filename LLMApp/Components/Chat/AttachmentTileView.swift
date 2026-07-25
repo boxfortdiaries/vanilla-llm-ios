@@ -25,7 +25,11 @@ struct AttachmentTileView: View {
     /// Set to make an image tile tappable (e.g. tap-to-preview) — nil
     /// (default) keeps the tile a plain, non-interactive view, so callers
     /// that don't opt in (composer preview, sent-message row) are unaffected.
-    var onTapImage: ((Attachment) -> Void)? = nil
+    /// The `CGRect?` is the tile's frame in window coordinates at tap time,
+    /// read from UIKit (see `TileFrameBox` — SwiftUI geometry can't be
+    /// trusted inside `MessageScrollHost`); nil when the tile isn't in a
+    /// window, in which case the preview opens without its hero flight.
+    var onTapImage: ((Attachment, CGRect?) -> Void)? = nil
     /// When true, an image tile shows a shimmering placeholder first and
     /// reveals the real image after a random 2-4s delay — simulates images
     /// arriving from a generation backend at staggered times instead of all
@@ -54,6 +58,10 @@ struct AttachmentTileView: View {
     /// in-progress reply's own text streaming triggers.
     @State private var revealDelay = Double.random(in: 2...4)
     @State private var shimmerPhase: CGFloat = 0
+    /// Locates this tile in the real UIKit hierarchy at tap time — see
+    /// `TileFrameBox`. A stable class reference per tile identity; only
+    /// consulted when `onTapImage` fires.
+    @State private var frameBox = TileFrameBox()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// File cards render at ONE fixed size everywhere — composer and sent
@@ -103,9 +111,10 @@ struct AttachmentTileView: View {
             }
             .transition(.opacity.combined(with: .scale(scale: 0.97)))
         if let onTapImage {
-            Button { onTapImage(attachment) } label: { tile }
+            Button { onTapImage(attachment, frameBox.windowFrame) } label: { tile }
                 .buttonStyle(.plain)
                 .accessibilityLabel("View image")
+                .background(TileFrameReader(box: frameBox))
         } else {
             tile
         }

@@ -8,41 +8,53 @@ import UIKit
 /// image-editing backend, so this is still "UI first" in that sense, but a
 /// message/attachment typed here really does reach the conversation.
 ///
-/// Presented via `.fullScreenCover`, forced to dark mode (per Dan
-/// 2026-07-19). Was briefly a plain `.sheet` instead, for its free
-/// dimmed-backdrop reveal and native swipe-to-dismiss — reverted back to
-/// `.fullScreenCover` (per Dan 2026-07-23) because iOS 26's Liquid Glass
-/// sheet chrome bakes a rounded-corner mask into the sheet's own frame that
-/// nests into the display's true hardware corner curve at the bottom two
-/// corners. On iPhone Pro models (a tighter corner radius than non-Pro,
-/// which is why this was invisible on an iPhone 17 simulator) that mask
-/// reveals a sliver of the window's own background against this screen's
-/// solid black content — confirmed pixel-for-pixel via a raw on-device
-/// screenshot, not a camera artifact, and immune to every sheet-level
-/// modifier (`presentationCornerRadius`, `presentationDetents(.large)`,
-/// `presentationBackground`) since it's the system's own card chrome, not
-/// anything in this view. `.fullScreenCover` has no card chrome to nest a
-/// mask into — it simply is the screen. The drag-to-dismiss below is a
-/// simple translate+fade, not the elaborate grow-from-thumbnail transform an
-/// earlier `.fullScreenCover` version used — that was removed separately for
-/// an unrelated reason (Apple's own `.navigationTransition(.zoom)`, and the
-/// hand-rolled version that replaced it, both read the tapped tile's
-/// position wrong, since those tiles live inside `MessageScrollHost`'s raw
-/// `UIScrollView`, which breaks SwiftUI's geometry APIs; see
-/// `AttachmentTray.availableWidth`'s doc comment) and isn't worth reviving
-/// just to get `.fullScreenCover` back.
+/// Presented as `HeroImagePreview`'s content (a root-level overlay in
+/// `ChatCard`), forced to dark mode (per Dan 2026-07-19). The presentation
+/// history, shortest version: started as `.fullScreenCover`, was briefly a
+/// plain `.sheet` (reverted 2026-07-23 — iOS 26's Liquid Glass sheet chrome
+/// bakes a corner mask that leaks a background sliver on iPhone Pro's
+/// tighter hardware corners), went back to `.fullScreenCover`, and is now an
+/// overlay so the hero zoom (per Dan 2026-07-25) can coordinate with the
+/// chat behind it — a system presentation can't animate against content
+/// outside itself. The earlier grow-from-thumbnail attempts (Apple's
+/// `.navigationTransition(.zoom)` and a hand-rolled version) both died
+/// reading the tapped tile's position through SwiftUI geometry, which
+/// `MessageScrollHost`'s raw `UIScrollView` breaks (see
+/// `AttachmentTray.availableWidth`'s doc comment) — `HeroImagePreview`
+/// sidesteps that by reading the tile's frame from UIKit instead
+/// (`TileFrameBox`).
 struct EditImagePreviewView: View {
     /// Every image attachment from the same message's own h-scroll row (per
     /// Dan 2026-07-19) — swiping here pages through the same set, not just
     /// the one that was tapped.
     let attachments: [Attachment]
+    /// Which image the preview opened on. Only used for `==` below (the
+    /// visible page is `selectedID`, seeded from this then owned by the
+    /// `TabView`).
+    let selected: Attachment
     /// Routes Send/mic-tap back into the real conversation (per Dan
     /// 2026-07-19: this screen isn't its own conversation, it just borrows
     /// the composer) — no default, so a call site can't silently forget to
     /// wire it and end up with a Send/mic button that does nothing.
     var actions: MessageActions
+    /// Hero state, passed through to `PreviewImage` — which reads the
+    /// "stand transparent while the flying copy covers me" flag off it
+    /// directly. Deliberately not a plain `UUID?` parameter: changing a
+    /// parameter re-runs THIS body, and this body rebuilds the glass nav
+    /// bar below, which pulses when rebuilt (per Dan 2026-07-25).
+    var heroState: ImagePreviewState = ImagePreviewState()
+    /// Reports where a page's image actually rests (window coordinates) so
+    /// the flying copy knows its landing/launch frame. Only fired while
+    /// `dragOffset == 0` — a mid-drag report would bake the drag translation
+    /// into what's supposed to be the resting frame.
+    var onRestFrameChange: (UUID, CGRect) -> Void = { _, _ in }
+    /// Every way out of this screen routes here — the overlay owns the exit
+    /// motion (hero return vs. plain fade), this view just names which one
+    /// it wants and which page it's on. Replaces the `@Environment(\.dismiss)`
+    /// the `.fullScreenCover` era used, which has nothing to dismiss now
+    /// that this is an inline overlay.
+    var onClose: (PreviewDismissStyle, Attachment?) -> Void = { _, _ in }
 
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var editText = ""
     @State private var editAttachments: [Attachment] = []
@@ -63,9 +75,18 @@ struct EditImagePreviewView: View {
     /// dismissed" for the fade — a tuned distance, not a physical unit.
     private let dragDismissDistance: CGFloat = 320
 
-    init(attachments: [Attachment], selected: Attachment, actions: MessageActions) {
+    init(
+        attachments: [Attachment], selected: Attachment, actions: MessageActions,
+        heroState: ImagePreviewState = ImagePreviewState(),
+        onRestFrameChange: @escaping (UUID, CGRect) -> Void = { _, _ in },
+        onClose: @escaping (PreviewDismissStyle, Attachment?) -> Void = { _, _ in }
+    ) {
         self.attachments = attachments
+        self.selected = selected
         self.actions = actions
+        self.heroState = heroState
+        self.onRestFrameChange = onRestFrameChange
+        self.onClose = onClose
         _selectedID = State(initialValue: selected.id)
     }
 
@@ -86,12 +107,10 @@ struct EditImagePreviewView: View {
     }
 
     private func closeAnimated() {
-        withAnimation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion)) {
-            dragOffset = dragDismissDistance
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + AppAnimation.standardDuration) {
-            dismiss()
-        }
+        // No translate-away-then-dismiss of its own anymore — the overlay's
+        // hero return picks up from the current drag position and carries
+        // the image home (or fades, if the user paged away).
+        onClose(.hero(fromOffset: dragOffset), selectedAttachment)
     }
 
     var body: some View {
@@ -103,21 +122,16 @@ struct EditImagePreviewView: View {
                     VStack(spacing: 0) {
                         Spacer(minLength: 0)
                         if let image = image(for: attachment) {
-                            // Square crop, same shape as the chat tiles (per
-                            // Dan 2026-07-19) — `.scaledToFit` on the true
-                            // aspect ratio used to letterbox a lot of empty
-                            // space above/below a landscape photo; a square
-                            // sized to the full available width fills the
-                            // sheet more.
-                            Color.clear
-                                .aspectRatio(1, contentMode: .fit)
-                                .overlay {
-                                    Image(uiImage: image)
-                                        .resizable()
-                                        .scaledToFill()
+                            PreviewImage(
+                                image: image,
+                                attachmentID: attachment.id,
+                                heroState: heroState,
+                                onRestFrame: { frame in
+                                    guard dragOffset == 0 else { return }
+                                    onRestFrameChange(attachment.id, frame)
                                 }
-                                .clipShape(RoundedRectangle(cornerRadius: AppRadius.large))
-                                .padding(.horizontal, AppSpacing.lg)
+                            )
+                            .padding(.horizontal, AppSpacing.lg)
                         }
                         Spacer(minLength: 0)
                     }
@@ -157,7 +171,7 @@ struct EditImagePreviewView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             GlassNavigationBar(
                 title: nil,
-                leadingAction: .init(icon: "xmark", label: "Close") { dismiss() },
+                leadingAction: .init(icon: "xmark", label: "Close") { closeAnimated() },
                 // A plain button, not a single-item `menu:` wrapped in an
                 // overflow "More" icon — `GlassNavigationBar`'s trailing pill
                 // shares one glass container across its actions, and a `Menu`
@@ -181,12 +195,6 @@ struct EditImagePreviewView: View {
                     .init(icon: "square.and.arrow.down", label: "Save to Photos", handler: {}),
                 ]
             )
-            // `GlassNavigationBar`'s own default top padding is `.md` (16pt);
-            // `ProfileSheet`'s close button — the other bottom sheet's header
-            // — sits at `.lg` (24pt) from the top. Scoped here rather than
-            // changing `GlassNavigationBar`'s shared default, which other
-            // screens rely on (per Dan 2026-07-19).
-            .padding(.top, AppSpacing.xs)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             PromptComposer(
@@ -216,7 +224,10 @@ struct EditImagePreviewView: View {
                     }
                     let sent = ([scoped].compactMap { $0 }) + editAttachments
                     actions.onSendElsewhere(editText, sent)
-                    dismiss()
+                    // `.plain`, not `.hero` — the send just mutated the
+                    // conversation, so the tile frame captured at tap time
+                    // is about to be stale as the list re-lays-out.
+                    onClose(.plain, selectedAttachment)
                 },
                 onStop: {},
                 onAddAttachment: { editAttachments.append($0) },
@@ -230,7 +241,9 @@ struct EditImagePreviewView: View {
                 // speaking leaves the conversation untouched.
                 onMicTap: {
                     actions.onStartVoice(selectedAttachment)
-                    dismiss()
+                    // `.plain` — this hands off into voice mode's own
+                    // transition; a simultaneous fly-back would fight it.
+                    onClose(.plain, selectedAttachment)
                 },
                 // A file doesn't make sense as an image-edit reference (per
                 // Dan 2026-07-19) — Photo Library and Camera only here.
@@ -250,57 +263,78 @@ struct EditImagePreviewView: View {
         // `.colorScheme` recolors this screen's own SwiftUI content the same
         // way without touching UIKit at all.
         .colorScheme(.dark)
-        // But `.colorScheme` alone doesn't reach UIKit-presented children
-        // (the Share sheet, the attach button's source menu) — those read
-        // the hosting controller's actual interface style, not this SwiftUI
-        // environment, so they rendered light against an otherwise-dark
-        // screen. `.preferredColorScheme` reaches them but goes through
-        // SwiftUI's own `@State`/environment re-render path to do it — tried
-        // first, gated behind a delayed `@State` flip to dodge the open
-        // transition's flash, but every re-render it caused (on each
-        // Share-sheet/attach-menu dismissal, well after that flip had
-        // already settled) visibly disrupted this screen's glass buttons
-        // (per Dan 2026-07-19) — the same "fresh construction" class of
-        // glitch already seen elsewhere in this app, just triggered by a
-        // SwiftUI re-render instead of a view being freshly built.
-        // `DarkInterfaceStyleOverride` below sets the same UIKit property
-        // directly, once, outside SwiftUI's render graph entirely, so it has
-        // nothing to re-diff.
-        .background(DarkInterfaceStyleOverride())
+        // `.colorScheme` alone doesn't reach UIKit-presented children — the
+        // `.fullScreenCover` era fixed that with a responder-chain walk that
+        // set `overrideUserInterfaceStyle` on the *cover's own* view
+        // controller (`DarkInterfaceStyleOverride`, removed with that era:
+        // as an inline overlay, the nearest view controller up the chain is
+        // now the app's root hosting controller, and force-darking that
+        // would darken the whole app — permanently, since the one-time set
+        // relied on the cover being torn down to undo itself). The Share
+        // sheet instead sets its own style directly (see `ActivityView`);
+        // the attach button's source menu may render light against this
+        // dark screen — verify live, scope a targeted fix if it grates.
     }
 }
 
-/// Sets the presented sheet's own `overrideUserInterfaceStyle` to `.dark`
-/// via a raw, one-time UIKit mutation — see `EditImagePreviewView.body`'s own
-/// doc comment for why this replaced a SwiftUI `@State`-driven
-/// `.preferredColorScheme`. Delayed past the sheet's own open transition
-/// (`contextMenuDelay`) for the same reason that attempt was too: a fresh
-/// hosting controller doesn't have this override in place for the
-/// presentation's own opening snapshot, which is what caused a black/white
-/// window flash the very first time this was tried undelayed.
+/// Compared on its *value* inputs only, so `HeroImagePreview` can re-render
+/// freely during a flight without rebuilding this screen — see the
+/// `.equatable()` call site there for the full reasoning. The closures are
+/// excluded on purpose: they're freshly allocated on every parent body
+/// evaluation and would make every instance unequal, which is exactly the
+/// rebuild being avoided. They stay behaviourally correct because each one
+/// reaches its state through `@State`'s storage rather than a captured
+/// snapshot.
 ///
-/// A window-level version was tried instead (per Dan 2026-07-19), since a
-/// share sheet's `UIActivityViewController` doesn't reliably inherit this
-/// view-controller-scoped override — but overriding the whole window visibly
-/// flashed the *entire app* to dark and back on open/close, which reads far
-/// worse than the Share sheet staying light. Reverted; not worth chasing
-/// further.
-private struct DarkInterfaceStyleOverride: UIViewRepresentable {
-    func makeUIView(context: Context) -> UIView {
-        let probe = UIView()
-        probe.isUserInteractionEnabled = false
-        probe.backgroundColor = .clear
-        DispatchQueue.main.asyncAfter(deadline: .now() + AppAnimation.contextMenuDelay) { [weak probe] in
-            var responder: UIResponder? = probe
-            while let current = responder, !(current is UIViewController) {
-                responder = current.next
-            }
-            (responder as? UIViewController)?.overrideUserInterfaceStyle = .dark
-        }
-        return probe
+/// Anything added to this view that must react to a parent change needs to
+/// be compared here — or, better, read off `ImagePreviewState` by a small
+/// child view the way `PreviewImage` does, which avoids re-running this
+/// body at all.
+/// `nonisolated` because `Equatable` isn't main-actor-isolated, and every
+/// field compared here is an immutable `let` — no actor-isolated state is
+/// touched.
+extension EditImagePreviewView: @MainActor Equatable {
+    nonisolated static func == (lhs: EditImagePreviewView, rhs: EditImagePreviewView) -> Bool {
+        lhs.attachments.map(\.id) == rhs.attachments.map(\.id)
+            && lhs.selected.id == rhs.selected.id
+            && lhs.heroState === rhs.heroState
     }
+}
 
-    func updateUIView(_ uiView: UIView, context: Context) {}
+/// One page's image. Square crop, same shape as the chat tiles (per Dan
+/// 2026-07-19) — `.scaledToFit` on the true aspect ratio used to letterbox a
+/// lot of empty space above/below a landscape photo; a square sized to the
+/// full available width fills the screen more.
+///
+/// Split out of `EditImagePreviewView` specifically so it can read the
+/// hero's "stand transparent" flag itself: that flag flips right as the
+/// flight lands, and re-running the parent body then rebuilt the glass nav
+/// bar at full opacity, which pulsed (per Dan 2026-07-25). Reading it here
+/// re-renders only this image.
+private struct PreviewImage: View {
+    let image: UIImage
+    let attachmentID: UUID
+    let heroState: ImagePreviewState
+    let onRestFrame: (CGRect) -> Void
+
+    var body: some View {
+        Color.clear
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AppRadius.large))
+            // Transparent (not absent) while the hero copy stands in —
+            // layout must survive so the rest-frame report stays live.
+            .opacity(heroState.hiddenPreviewImageID == attachmentID ? 0 : 1)
+            .onGeometryChange(for: CGRect.self) { proxy in
+                proxy.frame(in: .global)
+            } action: { frame in
+                onRestFrame(frame)
+            }
+    }
 }
 
 /// Presents `UIActivityViewController` directly via `.sheet` — see the Share
@@ -309,7 +343,13 @@ private struct ActivityView: UIViewControllerRepresentable {
     let activityItems: [Any]
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+        let controller = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+        // Directly on the sheet's own controller — this screen forces dark
+        // (see `.colorScheme` above) and the system sheet should match. The
+        // view-controller-scoped override that used to handle this went
+        // away with the `.fullScreenCover` presentation (see above).
+        controller.overrideUserInterfaceStyle = .dark
+        return controller
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}

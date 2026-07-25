@@ -66,6 +66,12 @@ import SwiftUI
 struct ConversationList: View {
     var messages: [Message]
     var actions: MessageActions = MessageActions()
+    /// Hero preview state — passed straight through to the scroll host as
+    /// an object. Nothing in this view reads a property off it: the read
+    /// happens all the way down in `AttachmentTray`, so a tile hide/unhide
+    /// re-renders only that tray rather than anything up here. See
+    /// `ImagePreviewState`.
+    var previewState: ImagePreviewState = ImagePreviewState()
     @Binding var isAtBottom: Bool
     /// Increment to force a return to the live conversation regardless of
     /// current ownership — the "return to latest" button (spec §18.7) uses
@@ -98,6 +104,7 @@ struct ConversationList: View {
         MessageScrollHost(
             messages: messages,
             actions: actions,
+            previewState: previewState,
             topInset: topInset,
             bottomInset: bottomInset,
             controller: scrollController,

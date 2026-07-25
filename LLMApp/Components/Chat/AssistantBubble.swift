@@ -5,6 +5,9 @@ import SwiftUI
 struct AssistantBubble: View {
     var message: Message
     var actions: MessageActions = MessageActions()
+    /// Hero preview state, passed straight through — only `AttachmentTray`
+    /// reads it. See `ImagePreviewState`.
+    var previewState: ImagePreviewState? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Flips true once `StreamingMessage`/`MarkdownView`'s cascade reveal has
@@ -17,12 +20,6 @@ struct AssistantBubble: View {
     /// the actual fix was shortening the cascade itself (see
     /// `MarkdownView.blockDuration`/`blockStagger`).
     @State private var revealComplete = false
-    /// Set on tap of a generated-image tile; drives the full-screen preview
-    /// (per Dan 2026-07-17). `UserBubble` has its own equivalent for a sent
-    /// message's own row (per Dan 2026-07-19); the composer's own in-progress
-    /// attachment tray is the only one that still doesn't opt in.
-    @State private var previewTarget: Attachment?
-
     private var imageAttachments: [Attachment] { message.attachments.filter { $0.type == .image } }
     private var fileAttachments: [Attachment] { message.attachments.filter { $0.type != .image } }
 
@@ -35,6 +32,7 @@ struct AssistantBubble: View {
             if !imageAttachments.isEmpty {
                 AttachmentTray(
                     attachments: imageAttachments, tileSize: 112,
+                    previewState: previewState,
                     // No explicit `naturalAspect: true` needed here — every
                     // image in this tray already has `isAgentGenerated` set
                     // (see `DemoImageAttachments`), and `AttachmentTileView`
@@ -54,7 +52,17 @@ struct AssistantBubble: View {
                     // row is hosted inside `MessageScrollHost`, where its own
                     // GeometryReader can't be trusted.
                     availableWidth: (UIScreen.current?.bounds.width ?? 0) - AppSpacing.lg * 2,
-                    onTapImage: { attachment in previewTarget = attachment },
+                    // Routed up to `ChatCard`'s hero overlay via actions
+                    // (per Dan 2026-07-25) — was a per-bubble
+                    // `.fullScreenCover`, which can't animate against the
+                    // chat behind it. The composer's own in-progress tray is
+                    // still the only image row that doesn't opt in.
+                    onTapImage: { attachment, sourceFrame in
+                        actions.onPreviewImage(ImagePreviewRequest(
+                            attachments: imageAttachments, selected: attachment,
+                            sourceFrame: sourceFrame, actions: actions
+                        ))
+                    },
                     simulateGenerating: true
                 )
             }
@@ -131,9 +139,6 @@ struct AssistantBubble: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .fullScreenCover(item: $previewTarget) { attachment in
-            EditImagePreviewView(attachments: imageAttachments, selected: attachment, actions: actions)
-        }
     }
 }
 

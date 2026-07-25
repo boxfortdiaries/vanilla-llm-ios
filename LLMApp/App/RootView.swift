@@ -218,6 +218,11 @@ struct RootView: View {
 /// drives the bar straight from the store (no per-conversation view model).
 private struct ChatCard: View {
     let container: AppContainer
+    /// Hero image preview state. A reference type, and nothing in this
+    /// view's body reads a property off it — that's load-bearing, not
+    /// incidental: this body rebuilds the glass nav bar below every time it
+    /// runs. See `ImagePreviewState`.
+    @State private var previewState = ImagePreviewState()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isRenaming = false
     @State private var renameText = ""
@@ -231,6 +236,11 @@ private struct ChatCard: View {
     /// `.onChange(of: coordinator.currentConversationID)` below for the actual
     /// graceful-dismiss-on-switch behavior this makes possible.
     @State private var voiceRoute: VoiceOption?
+    /// Hero image preview — owned here (like `voiceRoute`) because the
+    /// overlay must cover the nav bar this view adds via `.safeAreaInset`;
+    /// see `ConversationView.imagePreview`'s doc comment. The preview
+    /// blocks all interaction while up, so a conversation switch can't
+    /// happen underneath it.
 
     var body: some View {
         @Bindable var coordinator = container.navigationCoordinator
@@ -248,7 +258,8 @@ private struct ChatCard: View {
                     store: container.conversationStore,
                     aiService: container.aiService,
                     headerHeight: headerBottom,
-                    voiceRoute: $voiceRoute
+                    voiceRoute: $voiceRoute,
+                    previewState: previewState
                 )
                 .id(currentID)
             }
@@ -291,6 +302,15 @@ private struct ChatCard: View {
                 .animation(.spring(duration: 0.4), value: isEmpty)
             }
         }
+        // After the `.safeAreaInset` so the preview draws over the nav bar
+        // too — mounted/unmounted directly (no transition modifiers): the
+        // overlay choreographs its own entrance and exit and calls back
+        // only when fully done.
+        // `HeroPreviewHost`, not the `if let` unwrapped here — reading
+        // `previewState.request` in THIS body would re-render the glass nav
+        // bar above on every open/close, which is what made it blink (see
+        // `ImagePreviewState`).
+        .overlay { HeroPreviewHost(state: previewState) }
         .environment(container.appState)
         .environment(container.router)
         .environment(container.navigationCoordinator)

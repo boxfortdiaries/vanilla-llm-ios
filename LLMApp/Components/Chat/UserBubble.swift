@@ -7,12 +7,9 @@ import SwiftUI
 struct UserBubble: View {
     var message: Message
     var actions: MessageActions = MessageActions()
-
-    /// Set on tap of an image in this message's own row (per Dan 2026-07-19)
-    /// — same tap-to-preview `AssistantBubble` already has for its
-    /// generated-image row, and the same for every image here regardless of
-    /// whether it's a carried-over agent image or a plain upload.
-    @State private var previewTarget: Attachment?
+    /// Hero preview state, passed straight through — only `AttachmentTray`
+    /// reads it. See `ImagePreviewState`.
+    var previewState: ImagePreviewState? = nil
 
     private var imageAttachments: [Attachment] { message.attachments.filter { $0.type == .image } }
 
@@ -26,13 +23,22 @@ struct UserBubble: View {
                 // device edge; a row that fits ignores it and rests at the
                 // normal margin, same as the text bubble below.
                 AttachmentTray(
-                    attachments: message.attachments, tileSize: 112, corner: AppRadius.medium,
+                    attachments: message.attachments, tileSize: 112,
+                    previewState: previewState, corner: AppRadius.medium,
                     staggerOnAppear: true, alignment: .trailing, edgeCropInset: AppSpacing.lg,
                     // See `AttachmentTray.availableWidth`'s doc comment — this
                     // row is hosted inside `MessageScrollHost`, where its own
                     // GeometryReader can't be trusted.
                     availableWidth: (UIScreen.current?.bounds.width ?? 0) - AppSpacing.lg * 2,
-                    onTapImage: { attachment in previewTarget = attachment }
+                    // Same tap-to-preview `AssistantBubble` has (per Dan
+                    // 2026-07-19), now routed up to `ChatCard`'s hero
+                    // overlay (per Dan 2026-07-25) — see its call site.
+                    onTapImage: { attachment, sourceFrame in
+                        actions.onPreviewImage(ImagePreviewRequest(
+                            attachments: imageAttachments, selected: attachment,
+                            sourceFrame: sourceFrame, actions: actions
+                        ))
+                    }
                 )
             }
             // No empty bubble on an attachments-only message.
@@ -49,9 +55,6 @@ struct UserBubble: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
-        .fullScreenCover(item: $previewTarget) { attachment in
-            EditImagePreviewView(attachments: imageAttachments, selected: attachment, actions: actions)
-        }
     }
 }
 
