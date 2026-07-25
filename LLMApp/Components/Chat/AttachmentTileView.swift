@@ -56,9 +56,15 @@ struct AttachmentTileView: View {
     @State private var shimmerPhase: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var iconSize: CGFloat { tileSize * 0.643 }
-    private var cardMaxWidth: CGFloat { Self.cardMaxWidth(for: tileSize) }
-    private var isLarge: Bool { tileSize >= 88 }
+    /// File cards render at ONE fixed size everywhere — composer and sent
+    /// message alike (per Dan 2026-07-25: the scaled-up 112pt chat version
+    /// read as huge; a file card is a label, not media, so unlike an image
+    /// tile it gains nothing from the larger canvas). `tileSize` still
+    /// governs image tiles only. 56 = the composer's original tile size,
+    /// which both contexts now share.
+    static let fileTileSize: CGFloat = 56
+    static var fileCardMaxWidth: CGFloat { min(fileTileSize * 3.93, 300) }
+    private var fileIconSize: CGFloat { Self.fileTileSize * 0.643 }
     /// `naturalAspect` is a tray-wide default; an agent-originated image
     /// (see `Attachment.isAgentGenerated`) renders natural-aspect regardless
     /// of that default, so it still reads as "an agent image" even inside a
@@ -66,11 +72,6 @@ struct AttachmentTileView: View {
     /// Doesn't gate tap-ability — every tile with `onTapImage` set is
     /// tappable, agent-originated or not.
     private var rendersNaturalAspect: Bool { naturalAspect || attachment.isAgentGenerated }
-
-    /// A file card's width at a given tile size — exposed so `AttachmentTray`
-    /// can compute a row's total content width up front (to decide fit vs.
-    /// overflow) without an extra measurement pass.
-    static func cardMaxWidth(for tileSize: CGFloat) -> CGFloat { min(tileSize * 3.93, 300) }
 
     var body: some View {
         if attachment.type == .image {
@@ -182,36 +183,53 @@ struct AttachmentTileView: View {
     private var fileCard: some View {
         let ext = (attachment.name as NSString).pathExtension
         let icon = fileIcon(ext)
-        // Even inset on all sides (leading, trailing, gap to text) = the margin
-        // the frame height leaves above/below the icon.
-        let inset = (tileSize - iconSize) / 2
-        return HStack(spacing: inset) {
-            ZStack {
-                RoundedRectangle(cornerRadius: iconSize * 0.167).fill(icon.color.opacity(0.15))
-                Image(systemName: icon.symbol)
-                    .font(.system(size: iconSize * 0.5, weight: .medium))
-                    .foregroundStyle(icon.color)
-            }
-            .frame(width: iconSize, height: iconSize)
+        // Natural-size glyph, not centered in a `fileIconSize` box — once the
+        // backing plate was removed, the invisible box's slack read as extra
+        // leading padding (glyph ~21pt from the card edge) while the trailing
+        // edge only got the true inset, making the two sides visibly uneven
+        // (per Dan 2026-07-25). With the glyph hugging its own bounds, the
+        // explicit paddings below are the *visual* gaps, equal by
+        // construction.
+        return HStack(spacing: AppSpacing.sm) {
+            // Bare glyph in the CTA fill — no tinted backing plate, and no
+            // per-filetype color coding; the icon matches the send button's
+            // own background (`Tint.cta`, adaptive black/white) so the card
+            // reads monochrome like the rest of the app (per Dan 2026-07-25).
+            Image(systemName: icon)
+                .font(.system(size: fileIconSize * 0.5, weight: .medium))
+                .foregroundStyle(AppColor.Tint.cta)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(attachment.name)
-                    .font(isLarge ? .system(size: 17) : AppFont.subheadline)
+                    .font(AppFont.subheadline)
                     .fontWeight(.medium)
                     .foregroundStyle(AppColor.Text.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(ext.isEmpty ? "File" : ext.uppercased())
-                    .font(isLarge ? .system(size: 13) : AppFont.caption)
+                    .font(AppFont.caption)
                     .foregroundStyle(AppColor.Text.secondary)
             }
         }
-        .padding(.horizontal, inset)
-        .frame(height: tileSize)
-        .frame(maxWidth: cardMaxWidth)
-        .background(AppColor.Surface.primary, in: RoundedRectangle(cornerRadius: corner))
+        .padding(.horizontal, AppSpacing.md)
+        .frame(height: Self.fileTileSize)
+        .frame(maxWidth: Self.fileCardMaxWidth)
+        // Natural content width, not greedy — a maxWidth-only frame expands
+        // to fill whatever width it's proposed (up to the cap), so a lone
+        // card in the composer stretched across the whole input field while
+        // the same card in an overflowing multi-file row (whose ScrollView
+        // proposes ideal width) hugged its content (per Dan 2026-07-25).
+        // `fixedSize` resolves the card at its ideal width in every context;
+        // the `maxWidth` cap above still truncates long filenames.
+        .fixedSize(horizontal: true, vertical: false)
+        // Fixed radius, not the tray's `corner` param — same principle as
+        // `fileTileSize`: the card renders identically in every context
+        // (per Dan 2026-07-25), so it doesn't inherit the chat tray's larger
+        // `medium` radius meant for its 112pt image tiles. `corner` still
+        // governs image tiles only.
+        .background(AppColor.Surface.primary, in: RoundedRectangle(cornerRadius: AppRadius.small))
         .overlay {
-            RoundedRectangle(cornerRadius: corner)
+            RoundedRectangle(cornerRadius: AppRadius.small)
                 .strokeBorder(AppColor.Separator.subtle, lineWidth: 1)
         }
     }
@@ -221,17 +239,19 @@ struct AttachmentTileView: View {
         return UIImage(contentsOfFile: url.path)
     }
 
-    /// SF Symbol + tint per common file kind — mirrors the color coding iOS uses
-    /// for documents so the type reads at a glance.
-    private func fileIcon(_ ext: String) -> (symbol: String, color: Color) {
+    /// SF Symbol per common file kind. Was symbol + per-kind tint (mirroring
+    /// iOS's document color coding) — the tint went monochrome with the rest
+    /// of the card (per Dan 2026-07-25), so the glyph shape alone now carries
+    /// the type distinction; the TXT/PDF subtitle already spells it out.
+    private func fileIcon(_ ext: String) -> String {
         switch ext.lowercased() {
-        case "pdf": return ("doc.fill", .red)
-        case "csv", "xls", "xlsx", "numbers": return ("tablecells.fill", .green)
-        case "doc", "docx", "pages", "rtf": return ("doc.fill", .blue)
-        case "txt", "md", "text": return ("doc.text.fill", AppColor.Text.secondary)
-        case "key", "ppt", "pptx": return ("rectangle.on.rectangle.fill", .orange)
-        case "zip", "gz", "tar": return ("doc.zipper", AppColor.Text.secondary)
-        default: return ("doc.fill", AppColor.Text.secondary)
+        case "pdf": return "doc.fill"
+        case "csv", "xls", "xlsx", "numbers": return "tablecells.fill"
+        case "doc", "docx", "pages", "rtf": return "doc.fill"
+        case "txt", "md", "text": return "doc.text.fill"
+        case "key", "ppt", "pptx": return "rectangle.on.rectangle.fill"
+        case "zip", "gz", "tar": return "doc.zipper"
+        default: return "doc.fill"
         }
     }
 }

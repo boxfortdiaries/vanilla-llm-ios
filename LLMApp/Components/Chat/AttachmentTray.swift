@@ -76,13 +76,19 @@ struct AttachmentTray: View {
 
     private var staggers: Bool { staggerOnAppear && !reduceMotion && !alreadySeen }
 
+    /// The tallest tile actually in the row — see the `.frame(height:)`
+    /// comment below for why this isn't just `tileSize`.
+    private var rowContentHeight: CGFloat {
+        attachments.contains { $0.type == .image } ? tileSize : AttachmentTileView.fileTileSize
+    }
+
     /// Computed from known tile geometry rather than measured — avoids an
     /// extra layout pass (and the one-frame flash of wrong alignment that
     /// would come with it) just to learn whether the row overflows.
     private var naturalContentWidth: CGFloat {
         guard !attachments.isEmpty else { return 0 }
         let tileWidths = attachments.map { attachment -> CGFloat in
-            guard attachment.type == .image else { return AttachmentTileView.cardMaxWidth(for: tileSize) }
+            guard attachment.type == .image else { return AttachmentTileView.fileCardMaxWidth }
             if naturalAspect || attachment.isAgentGenerated, let ratio = AttachmentTileView.imageAspectRatio(for: attachment) {
                 return tileSize * ratio
             }
@@ -137,9 +143,13 @@ struct AttachmentTray: View {
         // changes mid-gesture, so it stays stable under a drag.
         .padding(.horizontal, -edgeCropInset)
         // GeometryReader fills all offered space by default — pin the height
-        // to exactly what the content needs (tile + the vertical padding
-        // above), matching what the ScrollView sized itself to before.
-        .frame(height: tileSize + 4)
+        // to exactly what the content needs (tallest tile + the vertical
+        // padding above). File cards render at their own fixed size
+        // regardless of `tileSize` (see `AttachmentTileView.fileTileSize`),
+        // so a files-only row in a sent message (tileSize 112) must not
+        // reserve 112pt of height around 56pt cards — only a row that
+        // actually contains an image needs the full `tileSize`.
+        .frame(height: rowContentHeight + 4)
         // Overflowing tiles hard-crop at the scroll view's edge — the input field's
         // rounded edge in the composer, the device frame in a sent message (which
         // extends the row to the screen edge). No trailing fade.
