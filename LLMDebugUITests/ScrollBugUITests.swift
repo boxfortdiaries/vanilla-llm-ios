@@ -41,7 +41,7 @@ final class ScrollBugUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let field = app.textFields["Message"]
+        let field = app.textFields["composerField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
 
         field.tap()
@@ -97,7 +97,7 @@ final class ScrollBugUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let field = app.textFields["Message"]
+        let field = app.textFields["composerField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
 
         field.tap()
@@ -119,7 +119,7 @@ final class ScrollBugUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let field = app.textFields["Message"]
+        let field = app.textFields["composerField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
         field.typeText("Tell me a short fact")
@@ -154,7 +154,7 @@ final class ScrollBugUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let field = app.textFields["Message"]
+        let field = app.textFields["composerField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
 
         // Send first, so ConversationList (which owns the tap-to-dismiss
@@ -206,7 +206,7 @@ final class ScrollBugUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let field = app.textFields["Message"]
+        let field = app.textFields["composerField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         let longText = "Rotation check with a message long enough to wrap differently in portrait versus landscape width"
         field.tap()
@@ -281,7 +281,7 @@ final class ScrollBugUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let field = app.textFields["Message"]
+        let field = app.textFields["composerField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
         field.typeText("Explain a complex topic simply")
@@ -318,7 +318,7 @@ final class ScrollBugUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let field = app.textFields["Message"]
+        let field = app.textFields["composerField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
         field.typeText("Write me an essay")
@@ -354,7 +354,7 @@ final class ScrollBugUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let field = app.textFields["Message"]
+        let field = app.textFields["composerField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
         field.typeText("Write me an essay")
@@ -380,7 +380,7 @@ final class ScrollBugUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let field = app.textFields["Message"]
+        let field = app.textFields["composerField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
 
         for text in ["First message", "Second message", "Third message"] {
@@ -436,7 +436,7 @@ final class ScrollBugUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let field = app.textFields["Message"]
+        let field = app.textFields["composerField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
         field.typeText("Write me an essay")
@@ -471,7 +471,7 @@ final class ScrollBugUITests: XCTestCase {
         app.buttons["sidebarNewChat"].tap()
         Thread.sleep(forTimeInterval: 0.5)
 
-        let field = app.textFields["Message"]
+        let field = app.textFields["composerField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
         field.typeText("Explain a complex topic simply")
@@ -504,7 +504,7 @@ final class ScrollBugUITests: XCTestCase {
         app.buttons["sidebarNewChat"].tap()
         Thread.sleep(forTimeInterval: 0.5)
 
-        let field = app.textFields["Message"]
+        let field = app.textFields["composerField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
         field.typeText("Explain a complex topic simply")
@@ -555,7 +555,7 @@ final class ScrollBugUITests: XCTestCase {
         app.buttons["sidebarNewChat"].tap()
         Thread.sleep(forTimeInterval: 0.5)
 
-        let field = app.textFields["Message"]
+        let field = app.textFields["composerField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
         field.typeText("Explain a complex topic simply")
@@ -598,7 +598,7 @@ final class ScrollBugUITests: XCTestCase {
         app.buttons["sidebarNewChat"].tap()
         Thread.sleep(forTimeInterval: 0.5)
 
-        let field = app.textFields["Message"]
+        let field = app.textFields["composerField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
         field.typeText("Explain a complex topic simply")
@@ -657,7 +657,7 @@ final class ScrollBugUITests: XCTestCase {
         app.buttons["sidebarNewChat"].tap()
         Thread.sleep(forTimeInterval: 0.5)
 
-        let field = app.textFields["Message"]
+        let field = app.textFields["composerField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
         field.typeText("Explain a complex topic simply")
@@ -712,7 +712,7 @@ final class ScrollBugUITests: XCTestCase {
         XCTAssertTrue(restingCTA.waitForExistence(timeout: 5))
         let composerMaxY = restingCTA.frame.maxY
 
-        let field = app.textFields["Message"]
+        let field = app.textFields["composerField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
         field.typeText("Explain a complex topic simply")

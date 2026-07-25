@@ -243,11 +243,25 @@ struct ConversationView: View {
         .animation(AppAnimation.resolve(AppAnimation.standard, reduceMotion: reduceMotion), value: isAtBottom)
     }
 
+    /// Whether the agent has said anything in this conversation yet, which
+    /// swaps the composer's placeholder from "Ask anything..." to
+    /// "Reply..." (per Dan 2026-07-25). Keyed on an assistant message
+    /// specifically, not just a non-empty conversation: "Reply" only makes
+    /// sense once there's something to reply *to*, so a sent-but-unanswered
+    /// first message keeps the original prompt. Flips as soon as the reply
+    /// starts streaming, not when it finishes — the composer is a
+    /// background element and waiting for the full reply would land the
+    /// change later than it reads as belonging to.
+    private var hasReply: Bool {
+        viewModel.messages.contains { $0.role == .assistant }
+    }
+
     private var composer: some View {
         PromptComposer(
             text: $viewModel.composerText,
             attachments: viewModel.attachments,
             isGenerating: viewModel.generationState == .generating,
+            placeholder: hasReply ? "Reply..." : "Ask anything...",
             onSend: handleSend,
             onStop: viewModel.stop,
             onAddAttachment: { viewModel.attachments.append($0) },

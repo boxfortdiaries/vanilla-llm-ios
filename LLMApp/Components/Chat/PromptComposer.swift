@@ -13,7 +13,7 @@ struct PromptComposer: View {
     @Binding var text: String
     var attachments: [Attachment]
     var isGenerating: Bool
-    var placeholder: String = "Message"
+    var placeholder: String = "Ask anything..."
     var onSend: () -> Void
     var onStop: () -> Void
     var onAddAttachment: (Attachment) -> Void
@@ -367,6 +367,14 @@ struct PromptComposer: View {
             }
             HStack(alignment: .bottom, spacing: 4) {
                 TextField(placeholder, text: $text, axis: .vertical)
+                    // Stable handle for the UI tests, which previously
+                    // matched on `placeholder` itself — so changing the
+                    // visible copy (2026-07-25: "Message" → "Ask
+                    // anything...") silently broke every one of them. Same
+                    // reasoning as `GlassNavigationBar.Action.identifier`:
+                    // test targets shouldn't be coupled to user-facing
+                    // wording. Don't rename to match future copy changes.
+                    .accessibilityIdentifier("composerField")
                     .font(AppFont.body)
                     .lineLimit(1...6)
                     .focused($isFocused)
