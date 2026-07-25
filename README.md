@@ -1,7 +1,5 @@
 # LLM-iOS
 
-https://github.com/user-attachments/assets/5db4c69d-9bb5-45b3-a65f-b991cfd8cbd1
-
 A ChatGPT / Claude–style LLM chat client for iOS 26, built in SwiftUI (Swift 6).
 Single-root conversation with a slide-over drawer, Liquid Glass UI, a
 full-screen conversation search that morphs out of the drawer's search button,
