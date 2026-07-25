@@ -43,25 +43,15 @@ struct DislikeFeedbackSheet: View {
             .padding(.horizontal, AppSpacing.lg)
             .padding(.top, AppSpacing.lg)
 
-            Spacer(minLength: AppSpacing.xl)
-
-            sendButton
-                .padding(.horizontal, AppSpacing.lg)
-                // `.sm`, not `.lg` — matches `PromptComposer`'s own
-                // outermost `.padding(.vertical, AppSpacing.sm)`, so the
-                // Submit button's bottom edge lines up with the message
-                // field's bottom edge in the chat experience (both measured
-                // from the same safe-area-respecting boundary, per Dan
-                // 2026-07-17).
-                .padding(.bottom, AppSpacing.sm)
+            Spacer(minLength: AppSpacing.lg)
         }
         .background(AppColor.Background.primary)
         // Without this, the keyboard's safe-area inset pushes the whole
         // VStack upward when the detail field gets focus — the field
-        // itself isn't anchored to the bottom (there's a Submit button and
-        // a Spacer below it), so there's nothing keyboard avoidance
-        // actually needs to protect here. Per Dan 2026-07-17: sheet
-        // content should hold still when the keyboard opens.
+        // itself isn't anchored to the bottom (just a Spacer below it, and
+        // Submit lives in the header now), so there's nothing keyboard
+        // avoidance actually needs to protect here. Per Dan 2026-07-17:
+        // sheet content should hold still when the keyboard opens.
         .ignoresSafeArea(.keyboard, edges: .bottom)
         // No forced `.medium` detent (matches `ProfileSheet`'s convention,
         // the app's only other sheet) — `.medium` squeezed the disclaimer
@@ -69,6 +59,13 @@ struct DislikeFeedbackSheet: View {
         .presentationDragIndicator(.hidden)
     }
 
+    // Per Dan 2026-07-24: close moved to the leading edge, Submit moved out
+    // of its old bottom-anchored full-width pill into the trailing edge here
+    // — a `Cancel — Title — Done`-style header (Mail Compose, new Contact)
+    // rather than this sheet's original bottom-CTA shape. Still a `ZStack`,
+    // not a plain `HStack` with two `Spacer`s — the close and Submit buttons
+    // aren't the same width, so only overlaying the title independently of
+    // both keeps it visually centered regardless.
     private var header: some View {
         ZStack {
             Text("Feedback")
@@ -76,23 +73,28 @@ struct DislikeFeedbackSheet: View {
                 .foregroundStyle(AppColor.Text.primary)
 
             HStack {
+                closeButton
                 Spacer()
-                Button { dismiss() } label: {
-                    // Matches `ProfileSheet.closeButton` exactly (per Dan
-                    // 2026-07-17) — 44pt to match the nav/search/hamburger
-                    // glass buttons, not a smaller one-off size.
-                    Image(systemName: "xmark")
-                        .font(AppFont.body)
-                        .foregroundStyle(AppColor.Text.primary)
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .glassEffect(.regular.interactive(), in: .circle)
-                .accessibilityLabel("Close")
+                submitButton
             }
         }
         .padding(.horizontal, AppSpacing.lg)
         .padding(.top, AppSpacing.lg)
+    }
+
+    private var closeButton: some View {
+        Button { dismiss() } label: {
+            // Matches `ProfileSheet.closeButton` exactly (per Dan
+            // 2026-07-17) — 44pt to match the nav/search/hamburger glass
+            // buttons, not a smaller one-off size.
+            Image(systemName: "xmark")
+                .font(AppFont.body)
+                .foregroundStyle(AppColor.Text.primary)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .glassEffect(.regular.interactive(), in: .circle)
+        .accessibilityLabel("Close")
     }
 
     private var issueRow: some View {
@@ -174,16 +176,20 @@ struct DislikeFeedbackSheet: View {
     /// — always black, just dimmed while disabled, rather than swapping to
     /// a different fill color for the disabled state (matches the
     /// composer's mic-button dimming convention elsewhere in the app).
-    private var sendButton: some View {
+    /// Compact now that it lives in the header instead of a full-width
+    /// bottom-anchored bar (per Dan 2026-07-24) — same fill/disabled
+    /// treatment, sized to sit comfortably next to `closeButton`.
+    private var submitButton: some View {
         Button {
             onSubmit()
             dismiss()
         } label: {
             Text("Submit")
-                .font(AppFont.headline)
+                .font(AppFont.subheadline)
+                .fontWeight(.semibold)
                 .foregroundStyle(AppColor.Text.inverse)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, AppSpacing.sm + 2)
+                .padding(.horizontal, AppSpacing.md)
+                .frame(height: 44)
         }
         .buttonStyle(PressableButtonStyle(background: AppColor.Tint.cta, cornerRadius: AppRadius.capsule))
         .opacity(selectedIssue == nil ? 0.35 : 1)
