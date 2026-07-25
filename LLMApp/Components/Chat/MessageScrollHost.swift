@@ -235,6 +235,22 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
         // `UICollectionView`-backed host (genuinely lazy) if conversations
         // grow past ~100 messages.
         hosting.sizingOptions = [.intrinsicContentSize]
+        // Root cause of the "message 2+ lands exactly 62pt low" bug
+        // (2026-07-25, identical on Simulator and device — 62pt is this
+        // device class's top safe-area inset): once the conversation is long
+        // enough that the resting contentOffset goes *positive*, this
+        // hosting view's top edge scrolls up past the top of the screen, and
+        // UIKit starts propagating the window's top safe area into it —
+        // SwiftUI then shifts the hosted column down by exactly that inset.
+        // Every geometry reading stays self-consistent (the measured
+        // coordinate space moves with the shifted column), which is why all
+        // offset math logged as perfectly correct while the paint sat 62pt
+        // low, and why message 1 (whose resting offset stays negative, top
+        // edge never crossing the screen top) was always immune. Safe areas
+        // are meaningless inside this scroll content anyway — the real
+        // header/composer insets are owned by `topInset`/`bottomInset` — so
+        // opt out of propagation entirely rather than compensating for it.
+        hosting.safeAreaRegions = []
         hosting.view.backgroundColor = .clear
         addChild(hosting)
         scrollView.addSubview(hosting.view)
@@ -563,25 +579,21 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
     /// converges correctly, in one continuous chase, no second pass — the
     /// motion itself is fixed either way.
     ///
-    /// **Known Simulator-only limitation (2026-07-25, unresolved):** message
-    /// 1 in a fresh conversation lands exactly on target; message 2+ in the
-    /// same thread lands ~62pt low on the Simulator specifically — confirmed
-    /// clean on real hardware twice (device build, and Xcode's own Run).
-    /// NSLog traces on both `pinnedMessageMinY` (via `onPinnedMinYChange`)
-    /// and `scrollView.contentOffset` (via `scrollViewDidScroll`) showed
-    /// both values as stable and *arithmetically correct* — `pinnedMessageMinY
-    /// - contentOffset` computed exactly `topInset` — yet the on-screen
-    /// position, checked against the same values via the accessibility tree,
-    /// didn't match. Neither value changed through any traced code path
-    /// (both are only ever written from the one place each already documents),
-    /// so something is moving the rendered row independent of both the
-    /// `UIScrollView`'s own offset and the measured content geometry — not
-    /// yet root-caused. This is the same general class of Simulator-vs-device
-    /// render-pipeline timing gap as the "image reply lands overshot" bug
-    /// this file already documents (§ above), just not the same mechanism —
-    /// don't retry the "extend the chase's window/attempts" fix without new
-    /// evidence, since the logged values already show the *chase itself* is
-    /// not what's stale here.
+    /// RESOLVED (2026-07-25, later the same day — was briefly documented
+    /// here as an "unresolved Simulator-only limitation"): message 2+
+    /// landing ~62pt low was neither Simulator-only (it reproduced
+    /// identically on-device once the same automated check finally ran
+    /// there — the earlier "clean on hardware" reports were message-1-only
+    /// spot checks) nor a chase/timing bug at all. It was safe-area
+    /// propagation into the hosting controller — see the `safeAreaRegions`
+    /// note in `viewDidLoad` for the full mechanism and why every logged
+    /// value stayed arithmetically perfect while the paint sat exactly one
+    /// top-safe-area-inset low, and why message 1 (resting offset still
+    /// negative, hosted view's top edge never crossing the screen top) was
+    /// structurally immune. Kept as a record of the misdiagnosis: when
+    /// every internal number is consistent but the screen disagrees by a
+    /// device-constant amount, suspect an inset/coordinate-space authority
+    /// *outside* the traced system before suspecting timing.
     private func recheckChaseTarget(previousTargetY: CGFloat) {
         view.layoutIfNeeded()
         let freshY = pinnedMessageMinY - topInset

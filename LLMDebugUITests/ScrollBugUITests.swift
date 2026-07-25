@@ -80,18 +80,17 @@ final class ScrollBugUITests: XCTestCase {
         logPinnedFrame(app: app, content: "And Spain?", label: "msg4")
     }
 
-    /// Repro for the "image-reply lands overshot on the Simulator" report
-    /// (per Dan 2026-07-24) — a reply carrying an attached image row has
-    /// enough height below the pinned user row that `scrollToCanonical`'s
-    /// chase (`MessageScrollViewController.animateChase`) can exhaust its
-    /// fixed real-time budget before the Simulator's async/timer scheduling
-    /// finishes growing the content, landing overshot with nothing left to
-    /// correct it. Fixed by firing one more `scrollToCanonical` when the
-    /// trailing message's status flips to `.complete` (`ConversationList`'s
-    /// `.onChange(of: messages.last?.status)`) — by then content is
-    /// genuinely final, so this settles cleanly regardless of how the first
-    /// chase landed. No assertions (same as this file's other tests) — pair
-    /// with `simctl log show --predicate 'eventMessage CONTAINS
+    /// Repro for the "image-reply lands overshot" report (per Dan
+    /// 2026-07-24): `canonicalTargetY`'s contentSize-based formula
+    /// overshot by roughly the reply's own content height below the pinned
+    /// row — worst with a tall generated-image row. Fixed by targeting
+    /// `pinnedMessageMinY` directly in `scrollToCanonical`/`recheckChaseTarget`
+    /// (see those doc comments; two intermediate fixes — a second
+    /// completion-triggered animation, then a recheck-only retarget — were
+    /// tried and replaced along the way). Expected result: `[PinCheck]`
+    /// frame y exactly equals ConversationView's topInset (156 on the
+    /// 402×874 layout). No assertions (same as this file's other tests) —
+    /// pair with `simctl log show --predicate 'eventMessage CONTAINS
     /// "[ScrollHost]"'` and confirm the LAST settled=/target= pair matches
     /// (delta=0.00) after this test runs.
     func testImageReplyLanding() {
