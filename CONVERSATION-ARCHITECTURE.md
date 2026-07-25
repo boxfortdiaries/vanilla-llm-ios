@@ -1405,6 +1405,12 @@ Ownership must be established before behavior is executed.
 
 A system that does not know who owns the viewport cannot produce predictable behavior.
 
+**Implemented reference (`MessageScrollHost.swift`):** the message list is backed by a real `UIScrollView`
+inside a `UIViewControllerRepresentable`, not a wrapped SwiftUI `ScrollView` — establishing ownership meant
+giving the app the actual scroll view, not layering control on top of one SwiftUI already owns. Elastic
+recovery is redirected via `UIScrollViewDelegate.scrollViewWillEndDragging`'s `targetContentOffset`, not a
+follow-up `scrollTo` call, so it can't lose a race against a bounce animation already in flight.
+
 ---
 
 # 4.12 COMMON FAILURE MODES
@@ -1428,6 +1434,22 @@ The following conditions represent architectural failures:
 • Generation state and viewport state becoming coupled.
 
 • Return-to-live behavior creating a new resting position.
+
+• Wrapping a SwiftUI `ScrollView` and calling `scrollTo` to correct its position — the call loses the race
+  against the `ScrollView`'s own still-decaying bounce-back animation, which keeps running regardless of
+  the call. (Tried and reverted in `MessageScrollHost.swift`; the fix was owning a real `UIScrollView`
+  outright, not a better-timed `scrollTo`.)
+
+• Reaching into a SwiftUI `ScrollView`'s underlying `UIScrollView` from outside and calling
+  `setContentOffset` directly — works exactly once before SwiftUI reverts it on the next render pass. A
+  view reached into or raced against from outside cannot reliably win against the system that actually
+  owns it.
+
+• Wrapping a state change in an animated transaction while a `.intrinsicContentSize`-sized
+  `UIHostingController` sits inside the viewport — its reported `contentSize` interpolates across *any*
+  active animation on the root view, not just its own transition, which can fool a scroll-chase into
+  thinking content is still moving and re-trigger a second, unwanted animation leg. (This is why sending a
+  message runs its scroll-chase unanimated.)
 
 ---
 
@@ -2017,6 +2039,10 @@ Then determine:
 
 The keyboard should trigger adaptation, not reaction.
 
+**Implemented reference (`KeyboardAnimationInfo.swift`):** capture the system's real keyboard motion
+(duration/curve from `keyboardWillShow/HideNotification`) and match it, rather than approximating keyboard
+follow with a SwiftUI spring — confirmed on-device as `duration=0.383, curve=7` in both chat and voice mode.
+
 ---
 
 # 6.13 COMMON FAILURE MODES
@@ -2040,6 +2066,11 @@ The following conditions represent architectural failures:
 • The keyboard is treated as a separate screen state.
 
 • Input interaction causes historical navigation.
+
+• Leaving text-field focus untouched when the scene goes `.inactive` (Control Center, App Switcher) — UIKit
+  auto-restores the keyboard the instant the scene returns `.active`, which reads as an unwanted
+  hide-then-pop-back flicker. Resign focus on scene-inactive instead — a deliberate trade-off (the keyboard
+  just stays down) over fighting UIKit's auto-restore.
 
 ---
 
@@ -3213,6 +3244,11 @@ Streaming is not a text-rendering problem.
 
 It is a state-management problem.
 
+**Implemented reference (`MessageActionRow`):** gate post-reply actions (copy/share/like/dislike/regenerate)
+on the reveal *animation* actually finishing, not on `message.status` alone — a separate `revealComplete`
+flag, reserved in layout from first render (opacity/hit-testing toggle, not inserted/removed) so it doesn't
+cause a scroll-position jump when it appears.
+
 ---
 
 # 9.15 COMMON FAILURE MODES
@@ -3236,6 +3272,10 @@ The following conditions represent architectural failures:
 • Making completion feel like a separate event.
 
 • Coupling generation speed to interaction behavior.
+
+• Gating message actions on `status == .complete` alone — text can be marked complete before its reveal
+  animation has finished playing, so actions appear to pop in mid-cascade, ahead of what the user has
+  actually seen finish.
 
 ---
 
@@ -4255,6 +4295,12 @@ Every behavior must have a home.
 
 If a feature requires bypassing existing architecture, the architecture should be reconsidered before implementation.
 
+**Implemented reference — Voice Mode:** entered as a content-swap inside the existing `ConversationView`
+shell (composer/nav bar/background stay mounted), not a modal presentation, and its active/inactive state
+is owned one level up (`ChatCard`) rather than by the screen it swaps into, so a sidebar peek doesn't tear
+the call down. This is "which existing system should own this behavior" applied: voice reuses the
+conversation lifecycle and viewport shell rather than declaring its own, per §13.3.
+
 ---
 
 # 13.12 COMMON FAILURE MODES
@@ -4274,6 +4320,15 @@ The following conditions represent architectural failures:
 • Creating feature-specific ownership models.
 
 • Allowing future capabilities to break conversation continuity.
+
+• Presenting a new capability as a modal (`.fullScreenCover`) when it needs to coexist with the
+  drawer/sidebar and conversation shell — a modal can't slide with the drawer or survive a sidebar peek.
+  (Rejected for Voice Mode for this reason; it's mounted as `ConversationView` content instead.)
+
+• Reaching for `.sheet` as the default full-bleed media presentation — iOS 26's Liquid Glass sheet chrome
+  bakes a rounded-corner mask that mismatches the true hardware corner radius on Pro models, visible as a
+  sliver of window background, and is immune to sheet-level modifiers since it's system chrome. (Image
+  preview uses `.fullScreenCover` instead, at the cost of hand-rolling drag-to-dismiss.)
 
 ---
 

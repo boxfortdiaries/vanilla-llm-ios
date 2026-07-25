@@ -107,7 +107,7 @@ constraint (see `SPEC.md` §6.9), not an accident of the default values.
 | `slowDuration` | 0.35s |
 | `pressScale` | 0.97 — scale-down on button press (spec §18.3) |
 | `contextMenuDelay` | 0.5s |
-| `cursorBlinkInterval` | 0.5s — streaming cursor blink (spec §18.11) |
+| `thinkingShimmerDuration` | 1.4s — shimmer sweep loop on the "Thinking" label (spec §18.11) |
 | `fast` | `.spring(response: 0.15, dampingFraction: 0.9)` |
 | `standard` | `.spring(response: 0.22, dampingFraction: 0.86)` |
 | `slow` | `.spring(response: 0.35, dampingFraction: 0.82)` |

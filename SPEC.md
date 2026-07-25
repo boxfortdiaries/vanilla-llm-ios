@@ -114,8 +114,19 @@ component-inventory pass, but is explicitly not wired into navigation.
 
 ## §9 — MessageActionsMenu
 
-Message-level actions (surfaced via long-press context menu and the post-completion message toolbar) are
-grouped into one type rather than passed around as individual closures.
+Message-level actions are grouped into one type (`MessageActions`) rather than passed around as individual
+closures, and are reachable through two routes that both call the same closures:
+
+- **`MessageActionRow`** — a flat row under a completed assistant reply (Copy, Share, Like, Dislike,
+  Regenerate). Gated on the reveal *animation* finishing (see `CONVERSATION-ARCHITECTURE.md` §9.14/§9.15),
+  not just on message status, so it never pops in mid-cascade.
+- **Long-press context menu** — native `contextMenu` on the message text only (Copy, Regenerate for
+  assistant messages, Share), per §18.4.
+
+Like/Dislike are toggles (tapping an already-set state clears it via the same closure). Dislike opens a
+`DislikeFeedbackSheet` (issue picker + optional detail) before committing, unless un-disliking, which skips
+the sheet. `onEdit`, `onSpeak`, and `onBookmark` are wired into `MessageActions` but intentionally do
+nothing yet — not part of the core UX this menu currently ships.
 
 ---
 
@@ -144,14 +155,15 @@ container), `GlassNavigationBar` (custom floating top bar, replacing system nav 
 
 ### §13.2 — Conversation & Message Rendering
 **See `CONVERSATION-ARCHITECTURE.md` — that document is authoritative here.** Its Streaming System (§9) and
-Viewport/Boundary Physics sections (§2) define the target behavior; the current implementation (streaming
-reveal, scroll-boundary recovery) predates that document and has known gaps against it, not yet reconciled.
+Viewport/Boundary Physics sections (§2) define the target behavior; the message list (`MessageScrollHost`)
+has since been rebuilt on a real `UIScrollView` specifically to satisfy that document's Scroll Ownership
+System (§4) — see its §4.11/§4.12 for the implementation and the two approaches that didn't work.
 
 Evidenced rules not superseded: assistant messages render readable-first — full-width text/markdown, no
 bubble background/container. User messages get a bubble (system-gray fill, not blue — revised from an
-original neutral fill that "vanished on the grouped canvas" once the app went monochrome). A three-dot
-"thinking" indicator communicates assistant activity before text arrives — its accessibility label says
-"Thinking," never "Typing"; the spec is explicit this must never imply a human is typing.
+original neutral fill that "vanished on the grouped canvas" once the app went monochrome). A shimmering
+"Thinking" label (see §18.11) communicates assistant activity before text arrives — its accessibility label
+says "Assistant is thinking," never "Typing"; the spec is explicit this must never imply a human is typing.
 
 ### §13.3 — Composer / Prompt Input
 The single most important component in the app, per its own doc comment. Uses native
@@ -170,6 +182,20 @@ Search scope changes via `Chip`-composed filter controls; results render as a de
 
 ### §13.7 — Settings
 Native grouped-list (`Section` inside `List`) pattern — explicitly avoid card-style settings rows.
+
+### §13.8 — Voice Mode
+*No surviving `spec §` citation — built 2026-07 after this document was reconstructed; described directly
+from current code.* A live, hands-free voice conversation (mic → on-device speech recognition → the
+existing chat pipeline → spoken reply), entered from the composer's mic button. Replaces the message list
+as `ConversationView`'s content rather than presenting as a modal, so it can slide with the drawer and
+survive a sidebar peek — see `CONVERSATION-ARCHITECTURE.md` §13.11/§13.12 for why a modal was rejected.
+Waveform is driven by real audio amplitude, not decoration.
+
+### §13.9 — Image Preview & Editing
+*No surviving `spec §` citation.* Full-screen (`fullScreenCover`) swipeable gallery of a message's images,
+with a composer for describing edits that routes back through the normal send/voice pipeline with the
+image attached — there is no image-editing backend. See `CONVERSATION-ARCHITECTURE.md` §13.12 for why
+`.sheet` was rejected in favor of `.fullScreenCover` here.
 
 ---
 
