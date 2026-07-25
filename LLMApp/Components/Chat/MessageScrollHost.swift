@@ -32,6 +32,11 @@ final class MessageScrollController {
     func scrollToLive(animated: Bool) {
         viewController?.scrollToLive(animated: animated)
     }
+
+    /// See `MessageScrollViewController.settlePinnedRow`'s doc comment.
+    func settlePinnedRow(animated: Bool) {
+        viewController?.settlePinnedRow(animated: animated)
+    }
 }
 
 /// Hosts `MessageListContent` inside a real `UIScrollView` — see
@@ -471,6 +476,53 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
         guard hasLastUserMessage else { return }
         view.layoutIfNeeded()
         let target = CGPoint(x: scrollView.contentOffset.x, y: settledLiveTargetY)
+        guard animated else {
+            scrollView.contentOffset = target
+            logSettled(target: target, finished: true)
+            return
+        }
+        let scrollView = scrollView
+        UIView.animate(
+            withDuration: 0.35, delay: 0,
+            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
+            animations: { scrollView.contentOffset = target },
+            completion: { [weak self] finished in
+                self?.logSettled(target: target, finished: finished)
+            }
+        )
+    }
+
+    /// Final correction once the trailing reply is known to be fully settled
+    /// (`ConversationList`'s `.onChange(of: messages.last?.status)`, when it
+    /// flips to `.complete`) — deliberately targets `pinnedMessageMinY`
+    /// directly instead of calling `scrollToCanonical` again. Root-caused via
+    /// NSLog + hand-checked algebra (2026-07-24, prompted by a Simulator-only
+    /// "image reply lands overshot" report): `canonicalTargetY`'s
+    /// contentSize-based formula overshoots by roughly the reply content's
+    /// own height below the pinned row — the exact same double-counting bug
+    /// `reassertPinAfterLayoutChange`'s RESOLVED note already describes for
+    /// the rotation path, just never fixed for this one. A reply with a tall
+    /// image row makes that overshoot large enough to visibly cut the pinned
+    /// row off-screen; confirmed via `LLMDebugUITests.testImageReplyLanding`
+    /// that repeatedly re-chasing `scrollToCanonical` just converges *more
+    /// reliably* on that same wrong value, not a correct one — platform
+    /// timing (Simulator vs. device) only ever changed whether the chase
+    /// converged at all, never what it converged to.
+    ///
+    /// Safe to use `pinnedMessageMinY` here specifically because, unlike the
+    /// initial send-path chase, this fires well after the row was inserted —
+    /// nothing "freshly inserted" about it by the time a reply has finished
+    /// streaming, so the row-insertion-perturbation hazard `canonicalTargetY`'s
+    /// own doc comment warns about doesn't apply (identical reasoning to why
+    /// the rotation path already trusts this same measurement).
+    func settlePinnedRow(animated: Bool) {
+        guard hasLastUserMessage else { return }
+        view.layoutIfNeeded()
+        let target = CGPoint(x: scrollView.contentOffset.x, y: pinnedMessageMinY - topInset)
+        NSLog(
+            "[ScrollHost] final-settle target=%.2f current=%.2f pinnedMessageMinY=%.2f topInset=%.2f",
+            target.y, scrollView.contentOffset.y, pinnedMessageMinY, topInset
+        )
         guard animated else {
             scrollView.contentOffset = target
             logSettled(target: target, finished: true)

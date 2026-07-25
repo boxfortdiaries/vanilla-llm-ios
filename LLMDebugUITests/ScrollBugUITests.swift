@@ -13,8 +13,12 @@ import XCTest
 final class ScrollBugUITests: XCTestCase {
     private func save(_ name: String) {
         let data = XCUIScreen.main.screenshot().pngRepresentation
-        let path = "/private/tmp/claude-501/-Users-danselleck/073d4af2-1446-4fc5-ac86-53310e08fdad/scratchpad/\(name).png"
-        try? data.write(to: URL(fileURLWithPath: path))
+        // NSTemporaryDirectory(), not a hardcoded path — this repo is meant
+        // for other developers to clone and run, and a path scoped to one
+        // machine's own tooling session wouldn't exist for anyone else.
+        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("\(name).png")
+        try? data.write(to: url)
+        NSLog("[ScrollBugUITests] saved screenshot: %@", url.path)
     }
 
     /// Exact on-screen frame (in points) of the pinned user bubble, via the
@@ -74,6 +78,39 @@ final class ScrollBugUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1)
         save("shot_msg4_settled")
         logPinnedFrame(app: app, content: "And Spain?", label: "msg4")
+    }
+
+    /// Repro for the "image-reply lands overshot on the Simulator" report
+    /// (per Dan 2026-07-24) — a reply carrying an attached image row has
+    /// enough height below the pinned user row that `scrollToCanonical`'s
+    /// chase (`MessageScrollViewController.animateChase`) can exhaust its
+    /// fixed real-time budget before the Simulator's async/timer scheduling
+    /// finishes growing the content, landing overshot with nothing left to
+    /// correct it. Fixed by firing one more `scrollToCanonical` when the
+    /// trailing message's status flips to `.complete` (`ConversationList`'s
+    /// `.onChange(of: messages.last?.status)`) — by then content is
+    /// genuinely final, so this settles cleanly regardless of how the first
+    /// chase landed. No assertions (same as this file's other tests) — pair
+    /// with `simctl log show --predicate 'eventMessage CONTAINS
+    /// "[ScrollHost]"'` and confirm the LAST settled=/target= pair matches
+    /// (delta=0.00) after this test runs.
+    func testImageReplyLanding() {
+        let app = XCUIApplication()
+        app.launch()
+
+        let field = app.textFields["Message"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+
+        field.tap()
+        field.typeText("generate some images of a garden")
+        app.buttons["Send message"].tap()
+
+        let deadline = Date().addingTimeInterval(15)
+        while !field.isEnabled, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+        save("shot_image_reply_settled")
+        logPinnedFrame(app: app, content: "generate some images of a garden", label: "imageReply")
     }
 
     /// Milestone 5 spot-check: does touch actually reach through the
