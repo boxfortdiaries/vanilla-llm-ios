@@ -1,11 +1,81 @@
 # Vanilla
 
-A ChatGPT / Claude–style LLM chat client for iOS 26, built in SwiftUI (Swift 6).
-Single-root conversation with a slide-over drawer, Liquid Glass UI, a
-full-screen conversation search that morphs out of the drawer's search button,
-and a live hands-free voice conversation mode (mic → on-device speech
-recognition → the normal chat pipeline → spoken reply). The AI layer is a
-mock (`MockAIService`) behind an `AIService` protocol.
+**A ChatGPT-style chat interface for iOS, with the model left out.**
+
+Built in SwiftUI for iOS 26 (Swift 6). Vanilla is everything *around* an LLM —
+the drawer, the streaming reveal, the scroll physics, the keyboard
+choreography, the voice mode — with the intelligence deliberately absent behind
+a one-method protocol. Point it at your own model and you have an app.
+
+The interface is the deliverable here. If you're building an LLM app, the model
+integration is the part you already know how to do. The weeks of fighting
+scroll position, keyboard timing, and safe-area propagation are the part you'd
+rather not repeat.
+
+## What you get
+
+- **A single-root conversation with a slide-over drawer** — no navigation
+  stack, no back button. Conversations swap underneath a persistent drawer.
+- **Streaming message reveal** — assistant replies stay hidden while streaming,
+  then cascade in via a custom `TextRenderer` once complete.
+- **Scroll ownership that doesn't fight you** — a pinned-send model where the
+  new message lands in a predictable spot every time, with elastic boundaries
+  at both ends. This is the part with a 90KB design document behind it.
+- **Keyboard coordination** — the composer and conversation move together,
+  driven by captured keyboard animation curves rather than guessed durations.
+- **Liquid Glass throughout** — with the sharp edges documented (see *Known
+  platform gotchas* below).
+- **Hands-free voice mode** — mic → on-device speech recognition → the normal
+  chat pipeline → spoken reply, as a full-screen live call UI.
+- **Full-screen conversation search** that morphs out of the drawer's search
+  button.
+- **A real design token system** — color, typography, spacing, radius, and
+  motion, with no raw values outside the token files.
+
+## Swap in your model
+
+The entire AI surface is one protocol:
+
+```swift
+@MainActor
+protocol AIService {
+    func send(message: String, context: [Message]) async throws -> AsyncStream<String>
+}
+```
+
+Write one conforming type that calls your API, then change one line in
+`Vanilla/App/AppContainer.swift`:
+
+```swift
+self.aiService = MyRealAIService()   // was MockAIService()
+```
+
+That's the integration. Nothing else in the app knows where tokens come from —
+the streaming UI consumes an `AsyncStream<String>` and doesn't care whether
+it's a mock typing on a timer or a live API.
+
+One thing you'll want to extend: errors are currently caught as a single
+catch-all in `ConversationViewModel`, which marks the message `.failed` and
+shows one generic string. `AIServiceError` distinguishes `.rateLimited` from
+`.connectionLost`, but the UI doesn't yet — a real backend probably wants
+those handled differently.
+
+## What's real and what isn't
+
+Being explicit so you know what you're inheriting:
+
+| | Status |
+|---|---|
+| Interface, motion, layout, voice mode | Complete and tuned |
+| AI responses | `MockAIService` — canned text on a timer |
+| Persistence | **None.** `ConversationStore` is in-memory, seeded from `SampleData`. Back it with SwiftData or your own layer. |
+| Auth, accounts, subscriptions | UI only — the Settings rows are literally `Button {}` |
+| Error handling | One generic catch-all (see above) |
+| Markdown rendering | Trusts its input, because its input is a mock |
+
+That last row matters if you ship this: `MarkdownView` was written for content
+from `MockAIService`, not from the open internet. Harden it before pointing the
+app at a live model.
 
 ## Requirements
 
@@ -24,12 +94,27 @@ open Vanilla.xcodeproj
 ```
 
 Run the `Vanilla` scheme on an iOS 26 simulator. After adding or removing
-source files, re-run `xcodegen generate`.
+source files, re-run `xcodegen generate` — otherwise the build fails with
+"cannot find X in scope."
+
+## Making it yours
+
+The name lives in a handful of places:
+
+- `project.yml` — project, target, scheme, source paths, `CFBundleDisplayName`,
+  and the camera/mic/speech usage strings
+- The `Vanilla/` source folder and `VanillaDebugUITests/`
+- `VanillaApp.swift` — the `@main` struct
+- The drawer header in `ConversationSidebar.swift`, and two strings in
+  `ProfileSheet.swift`
+
+The bundle ID is `PRODUCT_BUNDLE_IDENTIFIER` in `project.yml`. After renaming
+folders or editing `project.yml`, re-run `xcodegen generate`.
 
 ## Structure
 
 ```
-LLMApp/
+Vanilla/
   App/           App entry, container, root drawer/chat composition
   Features/      Conversation, Voice (live call UI + view model), Artifact,
                  Search, Settings screens (view + view model + state)
@@ -41,9 +126,43 @@ LLMApp/
   Utilities/     Helpers (keyboard animation capture, Markdown tables, sample
                  data) and Extensions
 
-LLMDebugUITests/ Separate Xcode target — a manual repro harness for scroll
-                  regressions (drives real sends via XCTest, screenshots each
-                  settle point; no assertions, not part of CI). See
-                  CONVERSATION-ARCHITECTURE.md §4.11/§4.12 (Scroll Ownership
-                  System) for how to use it.
+VanillaDebugUITests/
+                 Separate Xcode target — a manual repro harness for scroll
+                 regressions (drives real sends via XCTest, screenshots each
+                 settle point; no assertions, not part of CI). See
+                 CONVERSATION-ARCHITECTURE.md §4.11/§4.12 (Scroll Ownership
+                 System) for how to use it.
 ```
+
+## Documentation
+
+Three documents, all at the repo root:
+
+- **`CONVERSATION-ARCHITECTURE.md`** — the authoritative spec for conversation
+  behavior: viewport, motion, scroll ownership, keyboard coordination,
+  composer, lifecycle, streaming, history navigation, accessibility. Start here
+  before changing anything about how the conversation moves.
+- **`DESIGN.md`** — the actual values behind every design token.
+- **`SPEC.md`** — component philosophy and app-wide rules.
+
+Code comments cite these as `spec §X.Y`, so a citation you find in a file
+resolves to a section you can go read.
+
+## Known platform gotchas
+
+Documented because each one cost real debugging time on iOS 26:
+
+- `.glassEffect()` with `.buttonStyle(.plain)` silently breaks tap handling.
+  Use the default button style.
+- A `Menu` sharing a `GlassEffectContainer` with sibling glass buttons flickers
+  permanently on any sibling change. Give the `Menu` its own container.
+- Interactive glass pulses when a view is freshly constructed. The fix is
+  removing the animation source, not suppressing it on the glass view.
+- SwiftUI content hosted in a scroll view shifts down by one safe-area inset
+  once it scrolls past the screen top. `safeAreaRegions = []` fixes it.
+- Some glass artifacts reproduce **only** in the Simulator. Build to hardware
+  before chasing one.
+
+## License
+
+None yet — treat it as all-rights-reserved until one is added.
