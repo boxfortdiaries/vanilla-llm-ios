@@ -9,12 +9,12 @@ import Foundation
 /// unlike `SampleFiles` — `MockAIService` is the whole app's backend at this
 /// stage, not a debug-only aid, so this needs to work in every build.
 enum DemoImageAttachments {
-    // Only 3 real sample photos exist (`Resources/DemoImages`) — repeated to
-    // reach 6 rather than sourcing new assets, consistent with this being
-    // placeholder data standing in for a real backend (per Dan 2026-07-19).
+    // Six generated sample photos (`Resources/DemoImages`), one per slot — no
+    // repeats. Generated rather than sourced so the whole repo is covered by
+    // its own license.
     private static let names = [
         "demo-image-1", "demo-image-2", "demo-image-3",
-        "demo-image-1", "demo-image-2", "demo-image-3",
+        "demo-image-4", "demo-image-5", "demo-image-6",
     ]
 
     static func isImageRequest(_ prompt: String) -> Bool {
