@@ -46,8 +46,10 @@ principle this codebase names explicitly.
 Reuse and compose rather than duplicate. Recurring rule across many components: if two things describe the
 same visual pattern, they are the same component, not two.
 
-Evidenced consolidations: `ConversationCell` absorbs a separately-named `PinnedConversation` (pinning is a
-property of a conversation, not a different row type). `SettingsRow` absorbs `ToggleRow`. `Chip` absorbs
+Evidenced consolidations: `ConversationCell` absorbed a separately-named `PinnedConversation` (pinning is a
+property of a conversation, not a different row type) — that cell has since been deleted, having been
+orphaned when the drawer grew its own row, but the rule it illustrates still stands. `SettingsRow` absorbs
+`ToggleRow`. `Chip` absorbs
 `Tag`, `Chip`, and `Token` (three names for one capsule-label pattern). `StreamingMessage` reuses `Message`'s
 own status enum rather than a parallel "StreamState" enum.
 
