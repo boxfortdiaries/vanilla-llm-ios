@@ -25,7 +25,9 @@ struct Conversation: Identifiable, Equatable {
         self.isPinned = isPinned
     }
 
-    /// Used by ConversationCell/ConversationList previews (spec §8.2, §13.4).
+    /// Preview text for a conversation row (spec §8.2, §13.4). Unused today —
+    /// the drawer row shows the title only — but kept because the spec
+    /// describes preview rows, and this is where that line would come from.
     var preview: String {
         messages.last?.content ?? ""
     }
