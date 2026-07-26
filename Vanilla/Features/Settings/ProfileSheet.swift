@@ -11,10 +11,13 @@ import SwiftUI
 struct ProfileSheet: View {
     @Environment(\.dismiss) private var dismiss
 
-    private let name = "Dan Selleck"
-    private let initials = "DS"
-    private let email = "danselleck82@gmail.com"
-    private let phone = "+1 650 422 1867"
+    // Placeholder identity — deliberately fictional. example.com is reserved
+    // for documentation (RFC 2606) and 555-01xx for fiction, so neither can
+    // reach a real person if this ships unchanged.
+    private let name = "Alex Rivera"
+    private let initials = "AR"
+    private let email = "alex@example.com"
+    private let phone = "+1 555 010 0142"
 
     /// Top fade band — content dissolves over this height as it scrolls up
     /// under the close button, rather than hard-clipping at the sheet edge.
