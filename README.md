@@ -1,7 +1,5 @@
 # Vanilla
 
-**An out of the box LLM experience for iOS.**
-
 Vanilla is an LLM UX template built in SwiftUI for iOS 26 (Swift 6). Integrate your own model and customize Vanilla's UX to match your app.
 
 <table>
