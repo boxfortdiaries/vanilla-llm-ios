@@ -12,6 +12,10 @@ integration is the part you already know how to do. The weeks of fighting
 scroll position, keyboard timing, and safe-area propagation are the part you'd
 rather not repeat.
 
+| New conversation | Drawer | Streamed reply |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/01-empty.png" width="240"> | <img src="docs/screenshots/02-drawer.png" width="240"> | <img src="docs/screenshots/03-reply.png" width="240"> |
+
 ## What you get
 
 - **A single-root conversation with a slide-over drawer** — no navigation
@@ -127,11 +131,10 @@ Vanilla/
                  data) and Extensions
 
 VanillaDebugUITests/
-                 Separate Xcode target — a manual repro harness for scroll
-                 regressions (drives real sends via XCTest, screenshots each
-                 settle point; no assertions, not part of CI). See
-                 CONVERSATION-ARCHITECTURE.md §4.11/§4.12 (Scroll Ownership
-                 System) for how to use it.
+                 Separate Xcode target — manual drivers, not CI tests and with
+                 no assertions. `ScrollBugUITests` is a repro harness for
+                 scroll regressions (see CONVERSATION-ARCHITECTURE.md
+                 §4.11/§4.12); `ScreenshotTests` regenerates the images above.
 ```
 
 ## Documentation
