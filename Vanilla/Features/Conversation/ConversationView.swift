@@ -15,6 +15,13 @@ struct ConversationView: View {
     /// ever one toast on screen at a time.
     @State private var toastText: String?
     @State private var toastTask: Task<Void, Never>?
+    /// A toast raised by an action that *destroys* this view — deleting the
+    /// current conversation switches to a fresh one, which rebuilds this view
+    /// via `.id(currentID)`, so a toast presented before the switch would be
+    /// torn down with it. `ChatCard` owns the text (same reasoning as
+    /// `voiceRoute`) and this view drains it on appear, so the confirmation
+    /// lands in the conversation the user ends up looking at.
+    @Binding var pendingToast: String?
     /// Owned by `ChatCard` (above this view's own `.id(currentID)`-triggered
     /// rebuild) so an active call survives peeking at the sidebar and only
     /// ends on a real conversation switch — see `ChatCard`'s own doc comment
@@ -104,12 +111,14 @@ struct ConversationView: View {
 
     init(
         conversationID: UUID, store: ConversationStore, aiService: AIService, headerHeight: CGFloat = 0,
-        voiceRoute: Binding<VoiceOption?>, previewState: ImagePreviewState = ImagePreviewState()
+        voiceRoute: Binding<VoiceOption?>, previewState: ImagePreviewState = ImagePreviewState(),
+        pendingToast: Binding<String?> = .constant(nil)
     ) {
         _viewModel = State(initialValue: ConversationViewModel(conversationID: conversationID, store: store, aiService: aiService))
         self.headerHeight = headerHeight
         _voiceRoute = voiceRoute
         self.previewState = previewState
+        _pendingToast = pendingToast
     }
 
     // The nav bar, background, and rename flow live in `ChatCard` (above the
@@ -142,6 +151,21 @@ struct ConversationView: View {
         // duration/curve — this genuinely is the one real keyboard, not two
         // different ones to reconcile.
         .onAppear { KeyboardAnimationInfo.observeIfNeeded() }
+        // Drain any toast raised by the action that replaced the previous
+        // conversation with this one — see `pendingToast`.
+        .onAppear {
+            guard let text = pendingToast else { return }
+            pendingToast = nil
+            // Deferred a runloop rather than presented inline: this fires
+            // during the view's own first appearance, so the toast would be
+            // inserted as part of the initial render rather than animating in
+            // as a change to an already-visible view. Yielding first keeps it
+            // an ordinary insertion, matching how copy/feedback raise theirs.
+            Task { @MainActor in
+                await Task.yield()
+                presentToast(text)
+            }
+        }
         // .slow (not .standard) — the chat/voice swap read as too abrupt at
         // the standard spring's speed; the extra bit of ease reads calmer for
         // a mode switch this size (per Dan 2026-07).

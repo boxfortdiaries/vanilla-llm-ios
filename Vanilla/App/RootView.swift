@@ -227,6 +227,12 @@ private struct ChatCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isRenaming = false
     @State private var renameText = ""
+    /// Toast text for an action that outlives the conversation it was invoked
+    /// from — deleting the current conversation rebuilds `ConversationView` via
+    /// `.id(currentID)`, so the confirmation has to be owned above that and
+    /// handed to whichever conversation comes next. See
+    /// `ConversationView.pendingToast`.
+    @State private var pendingToast: String?
     /// Bottom edge of the floating header (global), so the conversation can inset
     /// its content — and pin — to rest just below it.
     @State private var headerBottom: CGFloat = 0
@@ -260,7 +266,8 @@ private struct ChatCard: View {
                     aiService: container.aiService,
                     headerHeight: headerBottom,
                     voiceRoute: $voiceRoute,
-                    previewState: previewState
+                    previewState: previewState,
+                    pendingToast: $pendingToast
                 )
                 .id(currentID)
             }
@@ -398,6 +405,9 @@ private struct ChatCard: View {
                 .init(title: "Share", icon: "square.and.arrow.up", shareItem: shareText(for: currentID)),
                 .init(title: "Delete", icon: "trash", role: .destructive) {
                     coordinator.delete(currentID)
+                    // Set after the delete: `coordinator.delete` switches to a
+                    // fresh conversation, and it's that view which drains this.
+                    pendingToast = "Conversation deleted"
                 },
             ], morphID: "trailingMenu"),
         ].compactMap { $0 }
