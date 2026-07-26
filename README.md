@@ -1,16 +1,8 @@
 # Vanilla
 
-**A ChatGPT-style chat interface for iOS, with the model left out.**
+**An out of the box LLM experience for iOS.**
 
-Built in SwiftUI for iOS 26 (Swift 6). Vanilla is everything *around* an LLM —
-the drawer, the streaming reveal, the scroll physics, the keyboard
-choreography, the voice mode — with the intelligence deliberately absent behind
-a one-method protocol. Point it at your own model and you have an app.
-
-The interface is the deliverable here. If you're building an LLM app, the model
-integration is the part you already know how to do. The weeks of fighting
-scroll position, keyboard timing, and safe-area propagation are the part you'd
-rather not repeat.
+Vanilla is an LLM UX template built in SwiftUI for iOS 26 (Swift 6). Integrate your own model and customize Vanilla's UX to match your app.
 
 | New conversation | Drawer | Streamed reply |
 |:---:|:---:|:---:|
@@ -18,23 +10,14 @@ rather not repeat.
 
 ## What you get
 
-- **A single-root conversation with a slide-over drawer** — no navigation
-  stack, no back button. Conversations swap underneath a persistent drawer.
-- **Streaming message reveal** — assistant replies stay hidden while streaming,
-  then cascade in via a custom `TextRenderer` once complete.
-- **Scroll ownership that doesn't fight you** — a pinned-send model where the
-  new message lands in a predictable spot every time, with elastic boundaries
-  at both ends. This is the part with a 90KB design document behind it.
-- **Keyboard coordination** — the composer and conversation move together,
-  driven by captured keyboard animation curves rather than guessed durations.
-- **Liquid Glass throughout** — with the sharp edges documented (see *Known
-  platform gotchas* below).
-- **Hands-free voice mode** — mic → on-device speech recognition → the normal
-  chat pipeline → spoken reply, as a full-screen live call UI.
-- **Full-screen conversation search** that morphs out of the drawer's search
-  button.
-- **A real design token system** — color, typography, spacing, radius, and
-  motion, with no raw values outside the token files.
+- **A single-root conversation with a slide-over drawer** No navigation stack, no back button. Conversations swap underneath a persistent drawer.
+- **Streaming message reveal** Assistant replies stay hidden while streaming, then cascade in via a custom `TextRenderer` once complete.
+- **Scroll ownership that doesn't fight you** Pinned-send model where the new message lands in a predictable spot every time, with elastic boundaries at both ends. This is the part with a 90KB design document behind it.
+- **Keyboard coordination** Composer and conversation move together, driven by captured keyboard animation curves rather than guessed durations.
+- **Liquid Glass throughout** Native iOS materials, with the rough edges documented in *Known platform gotchas* below.
+- **Hands-free voice mode** Mic → on-device speech recognition → the normal chat pipeline → spoken reply, as a full-screen live call UI.
+- **Full-screen conversation search** Morphs out of the drawer's search button.
+- **A real design token system** Color, typography, spacing, radius, and motion, with no raw values outside the token files.
 
 ## Swap in your model
 
@@ -54,15 +37,7 @@ Write one conforming type that calls your API, then change one line in
 self.aiService = MyRealAIService()   // was MockAIService()
 ```
 
-That's the integration. Nothing else in the app knows where tokens come from —
-the streaming UI consumes an `AsyncStream<String>` and doesn't care whether
-it's a mock typing on a timer or a live API.
-
-One thing you'll want to extend: errors are currently caught as a single
-catch-all in `ConversationViewModel`, which marks the message `.failed` and
-shows one generic string. `AIServiceError` distinguishes `.rateLimited` from
-`.connectionLost`, but the UI doesn't yet — a real backend probably wants
-those handled differently.
+**Note:** Errors are currently caught as a single catch-all in `ConversationViewModel`, which marks the message `.failed` and shows one generic string. `AIServiceError` distinguishes `.rateLimited` from `.connectionLost`, but the UI doesn't yet — a real backend probably wants those handled differently.
 
 ## What's real and what isn't
 
@@ -141,12 +116,12 @@ VanillaDebugUITests/
 
 Three documents, all at the repo root:
 
-- **`CONVERSATION-ARCHITECTURE.md`** — the authoritative spec for conversation
+- **`CONVERSATION-ARCHITECTURE.md`** The authoritative spec for conversation
   behavior: viewport, motion, scroll ownership, keyboard coordination,
   composer, lifecycle, streaming, history navigation, accessibility. Start here
   before changing anything about how the conversation moves.
-- **`DESIGN.md`** — the actual values behind every design token.
-- **`SPEC.md`** — component philosophy and app-wide rules.
+- **`DESIGN.md`** The actual values behind every design token.
+- **`SPEC.md`** Component philosophy and app-wide rules.
 
 Code comments cite these as `spec §X.Y`, so a citation you find in a file
 resolves to a section you can go read.
@@ -168,4 +143,9 @@ Documented because each one cost real debugging time on iOS 26:
 
 ## License
 
-None yet — treat it as all-rights-reserved until one is added.
+[MIT](LICENSE) — free to use, modify, and ship commercially. Keep the
+copyright notice with it (an "Open Source Licenses" screen is the usual home
+for this).
+
+If Vanilla saved you some time, a visible credit or a link back is always
+appreciated.
