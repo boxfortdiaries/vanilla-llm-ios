@@ -1,4 +1,4 @@
-# LLM-iOS
+# Vanilla
 
 A ChatGPT / Claude–style LLM chat client for iOS 26, built in SwiftUI (Swift 6).
 Single-root conversation with a slide-over drawer, Liquid Glass UI, a
@@ -20,10 +20,10 @@ Generate it, then open:
 
 ```sh
 xcodegen generate
-open LLM-iOS.xcodeproj
+open Vanilla.xcodeproj
 ```
 
-Run the `LLM-iOS` scheme on an iOS 26 simulator. After adding or removing
+Run the `Vanilla` scheme on an iOS 26 simulator. After adding or removing
 source files, re-run `xcodegen generate`.
 
 ## Structure

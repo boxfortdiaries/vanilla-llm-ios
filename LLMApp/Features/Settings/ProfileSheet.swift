@@ -36,7 +36,7 @@ struct ProfileSheet: View {
                     // close button above and the first section header below.
                     .listRowInsets(EdgeInsets(top: AppSpacing.xxl, leading: 0, bottom: AppSpacing.xs, trailing: 0))
 
-                Section("Customize LLM-iOS") {
+                Section("Customize Vanilla") {
                     linkRow("face.smiling", "Personalization")
                     linkRow("book", "Memory")
                     linkRow("square.grid.2x2", "Apps")
@@ -47,7 +47,7 @@ struct ProfileSheet: View {
                     valueRow("phone", "Phone number", phone)
                     valueRow("plus.app", "Subscription", "Free")
                     actionRow("arrow.clockwise", "Restore purchases")
-                    actionRow("sparkles", "Upgrade to LLM-iOS Plus", tint: AppColor.Tint.primary)
+                    actionRow("sparkles", "Upgrade to Vanilla Plus", tint: AppColor.Tint.primary)
                 }
 
                 Section("Theme") {

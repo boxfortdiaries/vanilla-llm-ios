@@ -51,7 +51,7 @@ struct ConversationSidebar: View {
                     // animates full→300 on close, rather than following the
                     // shrinking trailing edge. ponytail: 300 = RootView.drawerWidth.
                     HStack(spacing: AppSpacing.sm) {
-                        Text("LLM-iOS")
+                        Text("Vanilla")
                             .font(AppFont.title2)
                             .foregroundStyle(AppColor.Text.primary)
                             .accessibilityAddTraits(.isHeader)

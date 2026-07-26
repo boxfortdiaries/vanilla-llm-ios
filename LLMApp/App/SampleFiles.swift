@@ -6,7 +6,7 @@ import UIKit
 /// DEBUG-only: seeds a handful of dummy documents into the app's Documents
 /// folder so the file picker has something to attach in the Simulator (whose
 /// Files app is otherwise empty). Reachable via the picker's Browse → On My
-/// iPhone → LLM-iOS, thanks to the file-sharing Info.plist keys in project.yml.
+/// iPhone → Vanilla, thanks to the file-sharing Info.plist keys in project.yml.
 /// Idempotent; compiled out of release builds.
 enum SampleFiles {
     static func seedIfNeeded() {
@@ -15,7 +15,7 @@ enum SampleFiles {
         writeText("Meeting Notes.txt", to: docs, "Kickoff notes\n\n- Scope\n- Timeline\n- Owners\n")
         writeText("Q3 Budget.csv", to: docs, "Category,Planned,Actual\nEngineering,120000,118400\nDesign,60000,57200\n")
         writeText("Roadmap.md", to: docs, "# Roadmap\n\n## Now\n- Attachments\n\n## Next\n- Sync\n")
-        writePDF("Project Brief.pdf", to: docs, title: "Project Brief", body: "LLM-iOS — a ChatGPT-style client prototype.")
+        writePDF("Project Brief.pdf", to: docs, title: "Project Brief", body: "Vanilla — a ChatGPT-style client prototype.")
         #endif
     }
 
