@@ -11,7 +11,12 @@ settings:
     # Merged with the generated plist to carry UIFileSharingEnabled, which the
     # INFOPLIST_KEY_ settings can't express.
     INFOPLIST_FILE: Info.plist
-    INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    # Launch screen is declared in Info.plist, not generated. Generation emits
+    # an empty UILaunchScreen dict that wins over the file's version, and
+    # INFOPLIST_KEY_UILaunchScreen_UIColorName is read as a build setting but
+    # never reaches the plist — so the colour can only be set by turning
+    # generation off and declaring the dict directly.
+    INFOPLIST_KEY_UILaunchScreen_Generation: NO
     INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
     INFOPLIST_KEY_CFBundleDisplayName: "Vanilla"
     # Portrait-only (per Dan 2026-07-16) — landscape isn't a supported

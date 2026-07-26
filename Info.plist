@@ -7,5 +7,22 @@
 	     keys. Exposes Documents in Files → the DEBUG sample files are pickable. -->
 	<key>UIFileSharingEnabled</key>
 	<true/>
+	<!-- The generated launch screen ignores INFOPLIST_KEY_UILaunchScreen_UIColorName
+	     (the setting is read, but the generator still emits an empty UILaunchScreen
+	     dict), so the colour has to be declared here. Without it launch defaults to
+	     systemBackground — white — while the app's first screen is
+	     systemGroupedBackground, which read as a white flash on cold start. -->
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+		<!-- No UIImageName here on purpose: it silently doesn't render (tried
+		     with and without light/dark variants, correct plist + catalog
+		     entries both times). Putting a logo on the launch screen needs a
+		     LaunchScreen.storyboard. Apple's HIG argues against branding here
+		     anyway — a launch screen matching the first screen makes launch
+		     feel faster than a splash does. -->
+
+	</dict>
 </dict>
 </plist>
