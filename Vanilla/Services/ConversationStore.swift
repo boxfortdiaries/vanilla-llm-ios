@@ -32,10 +32,6 @@ final class ConversationStore {
         return conversation
     }
 
-    func archive(_ id: UUID) {
-        conversations.removeAll { $0.id == id }
-    }
-
     func delete(_ id: UUID) {
         conversations.removeAll { $0.id == id }
     }

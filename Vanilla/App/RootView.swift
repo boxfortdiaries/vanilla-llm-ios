@@ -364,7 +364,7 @@ private struct ChatCard: View {
     private func trailingActions(currentID: UUID, isEmpty: Bool) -> [GlassNavigationBar.Action] {
         let coordinator = container.navigationCoordinator
         // While a voice call is active, the trailing menu swaps to voice-only
-        // actions — rename/share/archive/delete aren't relevant mid-call, and
+        // actions — rename/share/delete aren't relevant mid-call, and
         // this is what replaces `LiveVoiceConversationView`'s old standalone
         // options icon now that the real header is what's visible during voice
         // mode too.
@@ -396,7 +396,6 @@ private struct ChatCard: View {
                     isRenaming = true
                 },
                 .init(title: "Share", icon: "square.and.arrow.up", shareItem: shareText(for: currentID)),
-                .init(title: "Archive", icon: "archivebox", handler: coordinator.newChat),
                 .init(title: "Delete", icon: "trash", role: .destructive) {
                     coordinator.delete(currentID)
                 },
