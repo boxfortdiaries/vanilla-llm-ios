@@ -25,6 +25,21 @@ enum SampleData {
 
     static let attachment = Attachment(type: .file, name: "Q4-report.pdf")
 
+    /// The placeholder signed-in user, until there's a real account model.
+    /// Defined once because it isn't: the drawer avatar and the profile sheet
+    /// each used to hardcode their own copy, so renaming the placeholder in
+    /// one left stale initials in the other.
+    ///
+    /// Fictional by construction — example.com is reserved for documentation
+    /// (RFC 2606) and 555-01xx for fiction, so neither reaches a real person
+    /// if this ships unchanged.
+    enum Profile {
+        static let name = "Alex Rivera"
+        static let initials = "AR"
+        static let email = "alex@example.com"
+        static let phone = "+1 555 010 0142"
+    }
+
     // MARK: - Conversations
 
     /// Demonstrates markdown headings/bold/italic, a fenced code block, and a table.

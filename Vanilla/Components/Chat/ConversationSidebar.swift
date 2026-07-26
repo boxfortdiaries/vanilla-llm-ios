@@ -300,7 +300,8 @@ struct ConversationSidebar: View {
     }
 
     /// Account/profile entry — initials circle (no user model in this
-    /// prototype, so initials are fixed). Opens the account/settings sheet.
+    /// prototype, so the identity comes from `SampleData.Profile`, shared with
+    /// `ProfileSheet`). Opens the account/settings sheet.
     private var accountAvatar: some View {
         Button { showProfile = true } label: {
             Circle()
@@ -312,7 +313,7 @@ struct ConversationSidebar: View {
                 .frame(width: 44, height: 44)
                 .overlay { Circle().strokeBorder(AppColor.Separator.subtle, lineWidth: 1) }
                 .overlay {
-                    Text("AR")
+                    Text(SampleData.Profile.initials)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(AppColor.Text.primary)
                 }
