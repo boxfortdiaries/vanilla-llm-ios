@@ -123,7 +123,9 @@ VanillaDebugUITests/
                  Separate Xcode target — manual drivers, not CI tests and with
                  no assertions. `ScrollBugUITests` is a repro harness for
                  scroll regressions (see CONVERSATION-ARCHITECTURE.md
-                 §4.11/§4.12); `ScreenshotTests` regenerates the images above.
+                 §4.11/§4.12); `HeroPreviewUITests` drives the image-preview
+                 transition for video capture; `ScreenshotTests` regenerates
+                 the images above.
 ```
 
 ## Documentation
