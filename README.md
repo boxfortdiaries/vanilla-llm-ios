@@ -65,6 +65,8 @@ Being explicit so you know what you're inheriting:
 | Auth, accounts, subscriptions | UI only — the Settings rows are literally `Button {}` |
 | Error handling | One generic catch-all (see above) |
 | Markdown rendering | Trusts its input, because its input is a mock |
+| Demo images | AI-generated placeholders — swap in your own |
+| Assistant voice | Apple's built-in system voices via `AVSpeechSynthesizer`, not a TTS backend |
 
 That last row matters if you ship this: `MarkdownView` was written for content
 from `MockAIService`, not from the open internet. Harden it before pointing the
