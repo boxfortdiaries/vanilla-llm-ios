@@ -312,7 +312,7 @@ struct ConversationSidebar: View {
                 .frame(width: 44, height: 44)
                 .overlay { Circle().strokeBorder(AppColor.Separator.subtle, lineWidth: 1) }
                 .overlay {
-                    Text("DS")
+                    Text("AR")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(AppColor.Text.primary)
                 }
