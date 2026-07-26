@@ -593,7 +593,7 @@ final class MessageScrollViewController: UIViewController, UIScrollViewDelegate,
     /// window `canonicalTargetY`'s doc comment and the 2026-07-13 note above
     /// warn about; by the time this recheck runs (`chaseCheckInterval`
     /// later), that window has passed. Confirmed via
-    /// `LLMDebugUITests.testImageReplyLanding` (message 1) that this
+    /// `VanillaDebugUITests.testImageReplyLanding` (message 1) that this
     /// converges correctly, in one continuous chase, no second pass — the
     /// motion itself is fixed either way.
     ///

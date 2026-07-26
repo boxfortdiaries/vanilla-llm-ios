@@ -50,7 +50,7 @@ targets:
     platform: iOS
     deploymentTarget: "26.0"
     sources:
-      - path: LLMApp
+      - path: Vanilla
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.local.llmios
@@ -60,12 +60,12 @@ targets:
   # through Apple's own accessibility/testmanagerd channel instead of fake
   # mouse events, so it reliably reproduces the scroll bug's send flow.
   # Not shipped, not referenced by the app target.
-  LLMDebugUITests:
+  VanillaDebugUITests:
     type: bundle.ui-testing
     platform: iOS
     deploymentTarget: "26.0"
     sources:
-      - path: LLMDebugUITests
+      - path: VanillaDebugUITests
     dependencies:
       - target: Vanilla
     settings:
@@ -82,10 +82,10 @@ schemes:
     build:
       targets:
         Vanilla: all
-        LLMDebugUITests: [test]
+        VanillaDebugUITests: [test]
     run:
       config: Debug
     test:
       config: Debug
       targets:
-        - LLMDebugUITests
+        - VanillaDebugUITests

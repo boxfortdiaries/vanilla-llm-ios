@@ -1,6 +1,6 @@
 # DESIGN.md
 
-Status: **Live** — sourced directly from `LLMApp/Theme/*.swift`, 2026-07-12
+Status: **Live** — sourced directly from `Vanilla/Theme/*.swift`, 2026-07-12
 
 ## What this is
 
