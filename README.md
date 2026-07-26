@@ -31,6 +31,7 @@ Vanilla is an LLM UX template built in SwiftUI for iOS 26 (Swift 6). Integrate y
 - **Hands-free voice mode** Mic → on-device speech recognition → the normal chat pipeline → spoken reply, as a full-screen live call UI.
 - **Full-screen conversation search** Morphs out of the drawer's search button.
 - **A real design token system** Color, typography, spacing, radius, and motion, with no raw values outside the token files.
+- **An app icon in light and dark variants** Placeholder marks you'll want to replace. For your own, start from Apple's [app icon guidelines](https://developer.apple.com/design/human-interface-guidelines/app-icons) and the official template in [Apple Design Resources](https://developer.apple.com/design/resources/).
 
 ## Swap in your model
 
