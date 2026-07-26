@@ -55,6 +55,17 @@ final class NavigationCoordinator {
         switchTo(store.createConversation().id)
     }
 
+    /// Delete a conversation. Deleting the one currently on screen would leave
+    /// the chat showing a conversation that no longer exists, so that case
+    /// drops into a fresh one — `newChat()`'s reuse-if-empty shortcut is wrong
+    /// here, since the conversation it would reuse is the one just deleted.
+    func delete(_ id: UUID) {
+        let wasCurrent = id == currentConversationID
+        store.delete(id)
+        guard wasCurrent else { return }
+        switchTo(store.createConversation().id)
+    }
+
     func toggleSidebar() {
         isSidebarOpen.toggle()
     }

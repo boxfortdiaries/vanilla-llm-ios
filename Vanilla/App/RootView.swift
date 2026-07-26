@@ -79,6 +79,7 @@ struct RootView: View {
                 currentID: coordinator.currentConversationID,
                 onNewChat: coordinator.newChat,
                 onSelect: coordinator.switchTo,
+                onDelete: coordinator.delete,
                 isSearching: $isSearching,
                 searchQuery: $searchQuery
             )

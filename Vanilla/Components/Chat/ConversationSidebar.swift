@@ -8,6 +8,7 @@ struct ConversationSidebar: View {
     let currentID: UUID
     var onNewChat: () -> Void
     var onSelect: (UUID) -> Void
+    var onDelete: (UUID) -> Void
     /// Owned by RootView so it can expand this panel to full width while
     /// searching; the glass morph and the traveling list live here, in one
     /// view, which is what makes them real rather than a cross-view fake.
@@ -174,6 +175,17 @@ struct ConversationSidebar: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // Long-press to delete. The row is otherwise a plain Button, so
+        // without this a long press falls through to selection — which read as
+        // "delete switched conversations instead of deleting" (per Dan
+        // 2026-07-26, on device).
+        .contextMenu {
+            Button(role: .destructive) {
+                onDelete(conversation.id)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
     }
 
     private var searchButton: some View {
