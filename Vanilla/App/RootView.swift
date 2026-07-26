@@ -397,7 +397,9 @@ private struct ChatCard: View {
                 },
                 .init(title: "Share", icon: "square.and.arrow.up", shareItem: shareText(for: currentID)),
                 .init(title: "Archive", icon: "archivebox", handler: coordinator.newChat),
-                .init(title: "Delete", icon: "trash", role: .destructive, handler: coordinator.newChat),
+                .init(title: "Delete", icon: "trash", role: .destructive) {
+                    coordinator.delete(currentID)
+                },
             ], morphID: "trailingMenu"),
         ].compactMap { $0 }
     }
