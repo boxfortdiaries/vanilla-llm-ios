@@ -5,11 +5,20 @@
 Vanilla is an LLM UX template built in SwiftUI for iOS 26 (Swift 6). Integrate your own model and customize Vanilla's UX to match your app.
 
 <table>
-  <tr>
-    <td width="33.33%" align="center"><img src="docs/screenshots/01-empty.png" width="100%"><br>New conversation</td>
-    <td width="33.33%" align="center"><img src="docs/screenshots/02-drawer.png" width="100%"><br>Drawer</td>
-    <td width="33.33%" align="center"><img src="docs/screenshots/03-reply.png" width="100%"><br>Streamed reply</td>
-  </tr>
+  <thead>
+    <tr>
+      <th width="33.33%" align="center">New conversation</th>
+      <th width="33.33%" align="center">Drawer</th>
+      <th width="33.33%" align="center">Streamed reply</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><img src="docs/screenshots/01-empty.png" width="100%"></td>
+      <td><img src="docs/screenshots/02-drawer.png" width="100%"></td>
+      <td><img src="docs/screenshots/03-reply.png" width="100%"></td>
+    </tr>
+  </tbody>
 </table>
 
 ## What you get
